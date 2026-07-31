@@ -19,6 +19,10 @@ your machine.
   works in any app, not just ones with dictation support built in.
 - **No shortcut registration needed** — reads the keyboard directly below the
   compositor, so it works the same way on any desktop environment.
+- **Always-on-top pill** — a thin bar pinned to the bottom centre of the
+  screen, above every window (including fullscreen ones), that never steals
+  focus: dim at rest, red and breathing while listening, blue and sweeping
+  while transcribing.
 - **Tray icon + history window** — see live recording state at a glance, and
   browse/search/copy/retype past transcripts.
 - **English and Hinglish, one model** — dictate in English, in Hinglish (Hindi
@@ -38,11 +42,17 @@ your machine.
   window (works under both X11 and Wayland).
 - GTK4 + libadwaita and PyGObject for the app window; GTK3 + AppIndicator
   bindings for the tray icon (optional — see below).
+- For the pill: on GNOME, the bundled GNOME Shell extension (no extra
+  packages); elsewhere, [gtk4-layer-shell](https://github.com/wmww/gtk4-layer-shell)
+  (optional — see below).
 - Root/sudo access for one-time device permission setup (see below) — the
   daemon itself runs as your normal user afterwards.
 
 Developed and tested on Ubuntu/GNOME; the core daemon doesn't depend on
-GNOME specifically; the tray icon depends on your desktop supporting the
+GNOME specifically. The pill needs either GNOME (via the bundled Shell
+extension) or a Wayland compositor that implements `wlr-layer-shell`
+(sway, Hyprland, etc.) — plain X11 window managers can't host it. The tray
+icon depends on your desktop supporting the
 [AppIndicator](https://github.com/AyatanaIndicators) protocol (GNOME needs an
 extension for this — see step 3 below).
 
@@ -107,6 +117,23 @@ src/baatsun_tray.py (GTK3 + AppIndicator, separate process, system Python)
    loaded in the same Python process — "Show History" launches
    baatsun_gui.py as a subprocess, which is a no-op re-present rather than
    a second window if it's already running (GApplication D-Bus activation).
+
+src/baatsun_pill.py (GTK4 + gtk4-layer-shell, non-GNOME fallback)
+   The bottom-centre pill for wlr-layer-shell compositors (sway, Hyprland,
+   ...): an undecorated GTK4 window anchored to the bottom of the output on
+   the overlay layer, keyboard mode NONE and an empty input region so it can
+   never take focus or eat a click. Cairo-draws the pill itself (rounded
+   rect, glow, breathing/sweep animation) driven off the frame clock, fed by
+   the same subscribe stream as the tray. Not usable on GNOME: mutter
+   implements neither wlr-layer-shell nor client-side window positioning.
+
+gnome-extension/baatsun@umarbashirr.github.io/ (GJS, runs inside GNOME Shell)
+   The pill's GNOME implementation — a Clutter actor added to the Shell's
+   own chrome via Main.layoutManager.addChrome(), which is the only way to
+   sit above every window (including fullscreen ones) and stay
+   focus-transparent on GNOME/Wayland. Reads the same unix socket directly
+   via GJS's Gio bindings; no extra IPC. bin/baatsun-pill enables this
+   extension on GNOME instead of launching baatsun_pill.py.
 ```
 
 Transcript history is persisted to `~/.local/share/baatsun/history.json` and
@@ -148,9 +175,12 @@ group. Watch the output at the end for next steps — typically:
    effect).
 2. `systemctl --user enable --now baatsun`
 
-Then skip ahead to [Usage](#usage). The tray icon autostarts on your next
-login (or run `baatsun-tray` now), and "Baatsun" shows up in your app
-launcher.
+Then skip ahead to [Usage](#usage). The pill autostarts on your next login
+(on GNOME this enables the bundled Shell extension; elsewhere it launches
+`baatsun-pill` if `gtk4-layer-shell` is installed — see
+[The pill](#the-pill) if it doesn't appear). The tray icon is installed but
+no longer autostarts by default; run `baatsun-tray` if you want it too.
+"Baatsun" shows up in your app launcher either way.
 
 Prefer to grab the file yourself instead of piping a script into `sudo`?
 Download the `.deb` from the
@@ -174,12 +204,12 @@ python3 -m venv venv
 venv/bin/pip install faster-whisper numpy
 
 mkdir -p ~/.local/bin
-ln -sf "$(pwd)"/bin/baatsun-{gui,tray,toggle} ~/.local/bin/
+ln -sf "$(pwd)"/bin/baatsun-{gui,tray,toggle,pill} ~/.local/bin/
 ```
 
-The `ln -sf` step puts `baatsun-gui`/`baatsun-tray`/`baatsun-toggle` on your
-`PATH` (assuming `~/.local/bin` is on it, the default on Ubuntu/GNOME) so the
-desktop entries in steps 5 and 6 below can find them.
+The `ln -sf` step puts `baatsun-gui`/`baatsun-tray`/`baatsun-toggle`/
+`baatsun-pill` on your `PATH` (assuming `~/.local/bin` is on it, the default
+on Ubuntu/GNOME) so the desktop entries in steps 5 and 6 below can find them.
 
 #### 2. Let ydotool write to /dev/uinput without root
 
@@ -228,7 +258,7 @@ take a couple of seconds.
 No keyboard shortcut needs to be registered anywhere — the daemon watches
 the keyboard directly.
 
-#### 4. Install the app window and tray icon dependencies
+#### 4. Install the app window, tray icon, and pill dependencies
 
 `src/baatsun_gui.py` (GTK4 + libadwaita) needs PyGObject and the GTK4/
 libadwaita typelibs on your system Python:
@@ -249,15 +279,38 @@ session (`ubuntu-appindicators@ubuntu.com`); on other GNOME setups, install
 and enable that extension first, or skip the tray icon and just use
 `baatsun-gui` directly.
 
-#### 5. (Optional) autostart the tray icon on login
+For the pill:
+
+- **On GNOME**, install the bundled Shell extension:
+  ```bash
+  gnome-extension/install.sh
+  ```
+  then log out and back in (Wayland can't reload the Shell in place). No
+  extra packages needed.
+- **On sway/Hyprland/other `wlr-layer-shell` compositors**, install
+  `gtk4-layer-shell` — package names vary by distro:
+  ```bash
+  sudo apt install gir1.2-gtk4layershell-1.0   # Ubuntu 25.04+/Debian 13+
+  sudo pacman -S gtk4-layer-shell               # Arch
+  sudo dnf install gtk4-layer-shell             # Fedora
+  ```
+  Not in Ubuntu 24.04's archive; on older Ubuntu, build it from source or
+  skip the pill and use the tray icon instead.
+- **On GNOME/Xorg or a plain X11 window manager**, there's no supported way
+  to host the pill — skip it and use the tray icon/window instead.
+
+#### 5. (Optional) autostart the pill and/or tray icon on login
 
 ```bash
 mkdir -p ~/.config/autostart
-cp autostart/baatsun-tray.desktop ~/.config/autostart/
+cp autostart/baatsun-pill.desktop ~/.config/autostart/
+cp autostart/baatsun-tray.desktop ~/.config/autostart/   # optional, tray icon
 ```
 
-Without this, launch it manually with `baatsun-tray` (or run `baatsun-gui`
-directly to just open the history window, no tray icon).
+`baatsun-pill` at login detects GNOME automatically and enables the Shell
+extension instead of opening a window there. Without this entry, bring up
+the pill manually with `baatsun-pill`, or the tray/window with
+`baatsun-tray`/`baatsun-gui`.
 
 #### 6. (Optional) add "Baatsun" to your app launcher
 
@@ -281,6 +334,25 @@ app, in addition to the tray icon and running it from a terminal.
 `baatsun-toggle` also exists as a manual/scriptable alternative (sends a
 toggle command over the daemon's unix socket) — useful for testing without
 touching the keyboard, but not needed for day-to-day use.
+
+### The pill
+
+A thin bar pinned to the bottom centre of the screen, above every window
+(including fullscreen ones): dim grey at rest, red and breathing while
+listening, blue with a sweeping highlight while transcribing, and barely
+visible if the daemon isn't reachable. It's the fastest way to confirm the
+hotkey registered — no window to open, and it can't steal your keyboard
+focus, so the transcript still lands wherever you were typing.
+
+It autostarts on login (see [Installation](#installation)). Where it comes
+from depends on your desktop:
+
+- **GNOME** — a bundled GNOME Shell extension. `baatsun-pill` just makes
+  sure it's enabled; there's no separate window or process to manage.
+- **sway/Hyprland/other `wlr-layer-shell` compositors** — `baatsun-pill`
+  opens a GTK4 window via `gtk4-layer-shell`.
+- **X11, or a Wayland compositor without layer-shell support** — not
+  available; use the tray icon or app window instead.
 
 ### The app window
 
@@ -410,6 +482,16 @@ before trusting it with anything sensitive.
 - **Tray icon doesn't appear** — on GNOME, make sure the AppIndicator Shell
   extension is enabled (step 4 above); on other desktops, confirm your
   status bar supports the AppIndicator/KStatusNotifierItem protocol.
+- **Pill doesn't appear on GNOME** — check it's enabled:
+  `gnome-extensions list --enabled | grep baatsun`. If it's not, run
+  `gnome-extension/install.sh` again and log out and back in — Wayland can't
+  reload the Shell in place, so an extension enabled or copied into place
+  mid-session won't draw anything until the next login.
+- **Pill doesn't appear on sway/Hyprland/etc.** — run `baatsun-pill` from a
+  terminal and check the output; the most common cause is `gtk4-layer-shell`
+  not being installed (see step 4 above). On a plain X11 session or a
+  Wayland compositor without `wlr-layer-shell`, the pill isn't available at
+  all — use the tray icon instead.
 - **Transcription is slow or inaccurate** — try a different `model_override`/
   `compute_type` combination (see [Configuration](#configuration)); smaller
   models are faster but less accurate, larger models are the reverse.

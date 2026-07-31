@@ -53,7 +53,10 @@ case "$1" in
         fi
         echo "  $STEP. Run: systemctl --user enable --now baatsun"
         echo ""
-        echo "The tray icon autostarts on next login; launch it now with 'baatsun-tray',"
+        echo "The pill (the bottom-centre recording indicator) autostarts on next"
+        echo "login; run 'baatsun-pill' now to bring it up immediately. On GNOME"
+        echo "this just enables the bundled Shell extension — no window to launch."
+        echo "The tray icon and history window are still available: 'baatsun-tray',"
         echo "or open the 'Baatsun' app from your launcher. Full docs:"
         echo "https://github.com/umarbashirr/baatsun#readme"
         echo ""

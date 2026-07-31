@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Bring up the baatsun pill for whatever desktop this is.
+
+Two implementations exist because there is no one way to pin a 5px indicator
+above every window on Linux:
+
+  GNOME       a GNOME Shell extension (mutter implements neither
+              wlr-layer-shell nor client-side window positioning, so a plain
+              window is not an option). Nothing to launch — this just makes
+              sure the extension is enabled, then exits.
+  everything  src/baatsun_pill.py, a GTK4 window using gtk4-layer-shell.
+  else
+
+Autostarting the same command on both is the point: whichever branch applies,
+the pill ends up on screen after login with no per-desktop setup.
+"""
+import os
+import subprocess
+import sys
+
+EXTENSION_UUID = "baatsun@umarbashirr.github.io"
+
+INSTALLED_SCRIPT = "/opt/baatsun/src/baatsun_pill.py"
+HERE = os.path.dirname(os.path.abspath(__file__))
+CHECKOUT_SCRIPT = os.path.join(HERE, "..", "src", "baatsun_pill.py")
+
+PILL_SCRIPT = INSTALLED_SCRIPT if os.path.exists(INSTALLED_SCRIPT) else CHECKOUT_SCRIPT
+
+
+def enable_gnome_extension():
+    """Enable the Shell extension, idempotently.
+
+    Prefers the CLI (it tells the running Shell to load the extension right
+    away) and falls back to the gsettings key the Shell reads at startup, which
+    still works when the extension was installed after this session began.
+    """
+    try:
+        result = subprocess.run(
+            ["gnome-extensions", "enable", EXTENSION_UUID],
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    try:
+        import gi
+
+        from gi.repository import Gio
+
+        settings = Gio.Settings.new("org.gnome.shell")
+        enabled = settings.get_strv("enabled-extensions")
+        if EXTENSION_UUID not in enabled:
+            settings.set_strv("enabled-extensions", enabled + [EXTENSION_UUID])
+            Gio.Settings.sync()
+        # A disabled-extensions entry would override the above.
+        disabled = settings.get_strv("disabled-extensions")
+        if EXTENSION_UUID in disabled:
+            settings.set_strv(
+                "disabled-extensions", [u for u in disabled if u != EXTENSION_UUID]
+            )
+            Gio.Settings.sync()
+        return True
+    except Exception:
+        return False
+
+
+def main():
+    force_window = "--force-window" in sys.argv
+    is_gnome = "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP", "").upper()
+
+    if is_gnome and not force_window:
+        if not enable_gnome_extension():
+            print(
+                f"baatsun-pill: could not enable the '{EXTENSION_UUID}' GNOME Shell\n"
+                "extension. Install it, then log out and back in:\n"
+                "  https://github.com/umarbashirr/baatsun#the-pill",
+                file=sys.stderr,
+            )
+            return 1
+        return 0
+
+    os.execv(sys.executable, [sys.executable, PILL_SCRIPT])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

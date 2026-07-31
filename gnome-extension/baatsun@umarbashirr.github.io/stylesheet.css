@@ -1,0 +1,27 @@
+/* The pill is 100x5 at rest; extension.js scales it rather than resizing it,
+ * so border-radius is expressed against that resting height. */
+
+.baatsun-pill {
+  background-color: rgba(255, 255, 255, 0.22);
+  border-radius: 3px;
+}
+
+.baatsun-pill-listening {
+  background-color: #ff5c5c;
+  box-shadow: 0 0 8px 2px rgba(255, 92, 92, 0.55);
+}
+
+.baatsun-pill-transcribing {
+  background-color: rgba(92, 157, 255, 0.35);
+  box-shadow: 0 0 8px 2px rgba(92, 157, 255, 0.35);
+}
+
+/* Only visible during transcribing, where it travels the pill's length. */
+.baatsun-pill-sweep {
+  background-color: #5c9dff;
+  border-radius: 3px;
+}
+
+.baatsun-pill-offline {
+  background-color: rgba(255, 255, 255, 0.08);
+}

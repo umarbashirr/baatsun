@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Baatsun Pill
+Comment=Always-on-top dictation state indicator for the baatsun daemon
+Exec=baatsun-pill
+Icon=audio-input-microphone-symbolic
+Terminal=false
+Categories=Utility;
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

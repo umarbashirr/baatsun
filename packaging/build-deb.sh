@@ -31,18 +31,23 @@ mkdir -p "$STAGING/usr/lib/udev/rules.d"
 mkdir -p "$STAGING/usr/share/applications"
 mkdir -p "$STAGING/etc/xdg/autostart"
 mkdir -p "$STAGING/usr/share/doc/baatsun"
+mkdir -p "$STAGING/usr/share/gnome-shell/extensions"
 
 cp "$REPO_ROOT"/src/*.py "$STAGING/opt/baatsun/src/"
 
 install -m 755 "$REPO_ROOT/bin/baatsun-gui" "$STAGING/usr/bin/baatsun-gui"
 install -m 755 "$REPO_ROOT/bin/baatsun-tray" "$STAGING/usr/bin/baatsun-tray"
 install -m 755 "$REPO_ROOT/bin/baatsun-toggle" "$STAGING/usr/bin/baatsun-toggle"
+install -m 755 "$REPO_ROOT/bin/baatsun-pill" "$STAGING/usr/bin/baatsun-pill"
 
 install -m 644 "$REPO_ROOT/packaging/debian/baatsun.service" "$STAGING/usr/lib/systemd/user/baatsun.service"
 install -m 644 "$REPO_ROOT/systemd/60-ydotool.rules" "$STAGING/usr/lib/udev/rules.d/60-ydotool.rules"
 install -m 644 "$REPO_ROOT/desktop/baatsun-gui.desktop" "$STAGING/usr/share/applications/baatsun-gui.desktop"
-install -m 644 "$REPO_ROOT/autostart/baatsun-tray.desktop" "$STAGING/etc/xdg/autostart/baatsun-tray.desktop"
+install -m 644 "$REPO_ROOT/autostart/baatsun-pill.desktop" "$STAGING/etc/xdg/autostart/baatsun-pill.desktop"
 install -m 644 "$REPO_ROOT/packaging/debian/copyright" "$STAGING/usr/share/doc/baatsun/copyright"
+
+cp -r "$REPO_ROOT/gnome-extension/baatsun@umarbashirr.github.io" \
+    "$STAGING/usr/share/gnome-shell/extensions/baatsun@umarbashirr.github.io"
 
 install -m 755 "$REPO_ROOT/packaging/debian/postinst" "$STAGING/DEBIAN/postinst"
 install -m 755 "$REPO_ROOT/packaging/debian/postrm" "$STAGING/DEBIAN/postrm"
