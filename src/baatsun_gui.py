@@ -121,25 +121,15 @@ class SettingsWindow(Adw.PreferencesWindow):
     def __init__(self, parent):
         super().__init__(transient_for=parent, modal=True)
         self.set_title("Voice Settings")
-        self.set_default_size(420, 320)
+        self.set_default_size(420, 240)
 
         cfg = baatsun_config.load_config()
 
         page = Adw.PreferencesPage()
         group = Adw.PreferencesGroup(
-            title="Recognition",
+            title="Recording",
             description="Applying a change restarts the baatsun daemon (a few seconds while the model reloads).",
         )
-
-        self.model_row = Adw.ComboRow(title="Model size")
-        self.model_row.set_model(Gtk.StringList.new(baatsun_config.MODEL_CHOICES))
-        self.model_row.set_selected(baatsun_config.MODEL_CHOICES.index(cfg["model"]))
-        group.add(self.model_row)
-
-        self.compute_row = Adw.ComboRow(title="Compute type")
-        self.compute_row.set_model(Gtk.StringList.new(baatsun_config.COMPUTE_TYPE_CHOICES))
-        self.compute_row.set_selected(baatsun_config.COMPUTE_TYPE_CHOICES.index(cfg["compute_type"]))
-        group.add(self.compute_row)
 
         self.hotkey_row = Adw.ComboRow(title="Hotkey")
         self.hotkey_row.set_model(Gtk.StringList.new(baatsun_config.HOTKEY_CHOICES))
@@ -159,11 +149,11 @@ class SettingsWindow(Adw.PreferencesWindow):
         self.add(page)
 
     def on_apply(self, *_args):
-        cfg = {
-            "model": baatsun_config.MODEL_CHOICES[self.model_row.get_selected()],
-            "compute_type": baatsun_config.COMPUTE_TYPE_CHOICES[self.compute_row.get_selected()],
-            "hotkey": baatsun_config.HOTKEY_CHOICES[self.hotkey_row.get_selected()],
-        }
+        # Merge into the existing config rather than rebuilding it: model and
+        # compute_type are no longer editable here, but a config file (or a
+        # future setting) may still carry them, and they must survive a save.
+        cfg = baatsun_config.load_config()
+        cfg["hotkey"] = baatsun_config.HOTKEY_CHOICES[self.hotkey_row.get_selected()]
         baatsun_config.save_config(cfg)
         threading.Thread(target=self._restart_daemon, daemon=True).start()
         self.close()

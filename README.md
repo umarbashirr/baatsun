@@ -21,8 +21,8 @@ your machine.
   compositor, so it works the same way on any desktop environment.
 - **Tray icon + history window** — see live recording state at a glance, and
   browse/search/copy/retype past transcripts.
-- **Configurable** — model size, compute type, and hotkey combo, all
-  adjustable from the Settings panel.
+- **Configurable** — the hotkey combo is adjustable from the Settings panel;
+  model size and compute type are tunable via config file or env var.
 
 ## Requirements
 
@@ -68,14 +68,15 @@ src/baatsun_config.py (stdlib only — shared by both Python interpreters below)
    Reads/writes ~/.config/baatsun/config.json: model size, compute type,
    hotkey combo. baatsun.py reads it at startup (env vars still override,
    for anyone pinning values in systemd/baatsun.service); baatsun_gui.py's
-   Settings panel writes it and restarts the daemon to apply.
+   Settings panel writes the hotkey and restarts the daemon to apply,
+   preserving the model/compute-type keys it no longer exposes.
 
 src/baatsun_gui.py (GTK4 + libadwaita, system Python — needs PyGObject)
    The full app window: record/stop button, live state in the header
    ("Listening…"/"Transcribing…"), a search box that filters history live,
    and per-transcript copy/retype/delete actions. Fetches `history` on
    connect, then stays subscribed for live updates. A gear icon opens
-   Settings (model/compute-type/hotkey — writes baatsun_config and runs
+   Settings (hotkey — writes baatsun_config and runs
    `systemctl --user restart baatsun.service`). Closing the window hides
    it rather than quitting, so the tray icon can re-present it instantly.
 
@@ -279,33 +280,49 @@ Inside the window:
 - The search box filters history as you type.
 - Each transcript row has copy / retype (re-runs `ydotool type` into
   whatever's currently focused) / delete buttons.
-- The gear icon opens **Settings** — model size, compute type, and hotkey
-  combo (Ctrl+Super / Ctrl+Alt / Alt+Super / Ctrl+Shift). Applying restarts
-  the daemon (`systemctl --user restart baatsun.service`) to pick it up,
-  which takes a few seconds while the model reloads.
+- The gear icon opens **Settings** — the hotkey combo (Ctrl+Super / Ctrl+Alt
+  / Alt+Super / Ctrl+Shift). Applying restarts the daemon
+  (`systemctl --user restart baatsun.service`) to pick it up, which takes a
+  few seconds while the model reloads.
 
 History persists to `~/.local/share/baatsun/history.json` across daemon
 restarts; the toolbar's clear-history button wipes it.
 
 ## Configuration
 
-The Settings panel in `baatsun-gui` is the normal way to change these — it
-writes `~/.config/baatsun/config.json` and restarts the daemon for you.
-Defaults live in `src/baatsun_config.py`:
+All settings live in `~/.config/baatsun/config.json`; defaults are defined in
+`src/baatsun_config.py`.
+
+### Hotkey — Settings panel
+
+- **hotkey** — `ctrl+super` (default) / `ctrl+alt` / `alt+super` /
+  `ctrl+shift`.
+
+The gear icon in `baatsun-gui` is the normal way to change this. It writes
+the config file and restarts the daemon for you, leaving the values below
+untouched.
+
+### Model and compute type — config file or env var
+
+These aren't exposed in the Settings panel; `base.en`/`int8` suits most
+machines, and the wrong combination mostly just makes transcription slower.
+Change them if you need to:
 
 - **model** — faster-whisper size: `tiny.en` / `base.en` (default) /
   `small.en` (better accuracy, more latency) / `medium.en`.
 - **compute_type** — `int8` (default, fastest on CPU) / `int8_float16` /
   `float16` / `float32`.
-- **hotkey** — `ctrl+super` (default) / `ctrl+alt` / `alt+super` /
-  `ctrl+shift`.
 
-For scripted/headless setups, `BAATSUN_MODEL` and `BAATSUN_COMPUTE_TYPE` env
-vars still override the config file (there's no env var for hotkey — use the
-Settings panel or edit config.json directly). Set them by editing
-`systemd/baatsun.service` before step 3 if you built from source, or with
-`systemctl --user edit baatsun.service` (adds a drop-in override, so it
+Either edit `~/.config/baatsun/config.json` directly and restart the daemon
+(`systemctl --user restart baatsun.service`), or set the `BAATSUN_MODEL` and
+`BAATSUN_COMPUTE_TYPE` env vars, which override the config file. Set those by
+editing `systemd/baatsun.service` before step 3 if you built from source, or
+with `systemctl --user edit baatsun.service` (adds a drop-in override, so it
 survives package upgrades) if you used the `.deb`.
+
+Switching to a model you haven't used before downloads it on the next daemon
+start (~150 MB for `base.en`, more for the larger sizes), cached under
+`~/.cache/huggingface`.
 
 ## Privacy
 
@@ -333,8 +350,8 @@ before trusting it with anything sensitive.
   extension is enabled (step 4 above); on other desktops, confirm your
   status bar supports the AppIndicator/KStatusNotifierItem protocol.
 - **Transcription is slow or inaccurate** — try a different `model`/
-  `compute_type` combination in Settings; smaller models are faster but less
-  accurate, larger models are the reverse.
+  `compute_type` combination (see [Configuration](#configuration)); smaller
+  models are faster but less accurate, larger models are the reverse.
 
 ## Roadmap / known limitations
 
