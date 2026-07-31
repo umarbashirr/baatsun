@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Baatsun Tray
+Comment=Tray icon + history window for the baatsun dictation daemon
+Exec=/home/xclore/projects/baatsun/bin/baatsun-tray
+Icon=audio-input-microphone-symbolic
+Terminal=false
+Categories=Utility;
+X-GNOME-Autostart-enabled=true

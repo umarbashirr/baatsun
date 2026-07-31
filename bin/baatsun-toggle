@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+"""Send a toggle command to the baatsun daemon. Bind this to a keyboard shortcut."""
+import os
+import socket
+import sys
+
+SOCKET_PATH = f"/run/user/{os.getuid()}/baatsun.sock"
+
+
+def main():
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.connect(SOCKET_PATH)
+            sock.sendall(b"toggle")
+            reply = sock.recv(64).decode()
+            print(reply)
+    except (FileNotFoundError, ConnectionRefusedError):
+        print("baatsun daemon is not running", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

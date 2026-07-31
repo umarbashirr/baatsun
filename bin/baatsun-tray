@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""Launch the baatsun tray icon (see src/baatsun_tray.py)."""
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+TRAY_SCRIPT = os.path.join(HERE, "..", "src", "baatsun_tray.py")
+
+os.execv(sys.executable, [sys.executable, TRAY_SCRIPT] + sys.argv[1:])
