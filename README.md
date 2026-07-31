@@ -74,8 +74,19 @@ src/baatsun_config.py (stdlib only — shared by both Python interpreters below)
    override, for anyone pinning values in systemd/baatsun.service);
    baatsun_gui.py's Settings panel writes language + hotkey and restarts the
    daemon to apply, preserving the model/compute-type keys it doesn't expose.
-   resolve_language() maps the language profile to (model id, whisper
-   language token) so that pairing lives in exactly one place.
+   resolve_language() maps the language profile to (model, whisper language
+   token) so that pairing lives in exactly one place; it returns None for the
+   model when the managed Hinglish model should be used.
+
+src/baatsun_models.py (stdlib only)
+   Fetches the Hinglish model on first use. The English profile just names a
+   stock model and lets faster-whisper download it, but the Hinglish profile
+   needs a CTranslate2 conversion that only exists as an artifact we publish
+   ourselves — so ensure_hinglish_model() downloads the tarball from this
+   repo's models-v1 release, checks it against a pinned sha256, extracts via a
+   staging directory (so an interrupted run can't leave a half-model that
+   looks valid), and hands baatsun.py a local path. Cached under
+   ~/.cache/baatsun/models/.
 
 src/baatsun_gui.py (GTK4 + libadwaita, system Python — needs PyGObject)
    The full app window: record/stop button, live state in the header
@@ -291,7 +302,7 @@ Inside the window:
   Ctrl+Shift). Applying restarts the daemon
   (`systemctl --user restart baatsun.service`) to pick it up, which takes a
   few seconds while the model reloads — longer the first time you pick
-  Hinglish, since the model downloads then.
+  Hinglish, since the model (~62 MB) downloads then.
 
 History persists to `~/.local/share/baatsun/history.json` across daemon
 restarts; the toolbar's clear-history button wipes it.
@@ -318,20 +329,25 @@ chahiye`, not `मुझे एक कॉफ़ी चाहिए`. That's deli
 mapping characters to US-layout keycodes, and Devanagari has no keycodes to
 map to, so it would be silently dropped.
 
-Picking Hinglish switches the daemon to a different model:
+Picking Hinglish switches the daemon to a different model — a CTranslate2
+build of
+[`Oriserve/Whisper-Hindi2Hinglish-Swift`](https://huggingface.co/Oriserve/Whisper-Hindi2Hinglish-Swift)
+(Apache-2.0), fine-tuned to emit romanized Hinglish. Being whisper-base sized,
+it keeps roughly the same transcription latency as the English default.
 
-- **hinglish_model** — defaults to a CTranslate2 build of
-  [`Oriserve/Whisper-Hindi2Hinglish-Swift`](https://huggingface.co/Oriserve/Whisper-Hindi2Hinglish-Swift)
-  (Apache-2.0), a whisper-base-sized model fine-tuned to emit romanized
-  Hinglish. Being base-sized, it keeps roughly the same transcription latency
-  as the English default.
+The first time you select Hinglish, the daemon downloads that model (~62 MB)
+from this repo's [`models-v1`](https://github.com/umarbashirr/baatsun/releases/tag/models-v1)
+release into `~/.cache/baatsun/models/`, verifying it against a pinned
+sha256. The hotkey won't respond until it finishes — watch
+`journalctl --user -u baatsun.service -f` for progress. If the download fails
+the daemon logs the reason and falls back to English rather than dying.
 
-The first time you select Hinglish, the daemon downloads that model (~290 MB)
-into `~/.cache/huggingface` — the hotkey won't respond until it finishes.
-Watch `journalctl --user -u baatsun.service -f` if you want to see progress.
-Accuracy is decent but not on par with the English model; if you need better
-and can accept much slower transcription on CPU, point `hinglish_model` at a
-conversion of Oriserve's larger `Apex` or `Prime` models.
+- **hinglish_model** — empty by default, meaning "use the managed model
+  above". Set it to a faster-whisper model name, a HuggingFace CT2 repo id, or
+  a local directory to override. Accuracy on the default is decent but below
+  the English model; if you need better and can accept much slower
+  transcription on CPU, point this at a CT2 conversion of Oriserve's larger
+  `Apex` or `Prime` models.
 
 ### Model and compute type — config file or env var
 
@@ -384,9 +400,10 @@ before trusting it with anything sensitive.
   `compute_type` combination (see [Configuration](#configuration)); smaller
   models are faster but less accurate, larger models are the reverse.
 - **Nothing happens after switching to Hinglish** — the first run downloads a
-  ~290 MB model and the hotkey stays unresponsive until it lands. Check
-  `journalctl --user -u baatsun.service -f`; you should see a `loading model`
-  line, then `model loaded`.
+  ~62 MB model and the hotkey stays unresponsive until it lands. Check
+  `journalctl --user -u baatsun.service -f`; you should see download progress,
+  then `model loaded`. If the download failed it says so and falls back to
+  English; delete `~/.cache/baatsun/models/` to retry from scratch.
 - **Hinglish transcribes pure English badly** — expected. The Hinglish model
   is tuned for Hindi-dominant speech; switch back to English in Settings when
   you're dictating only English.

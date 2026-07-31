@@ -12,16 +12,16 @@ import os
 CONFIG_DIR = os.path.expanduser("~/.config/baatsun")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
-# The Hinglish model is a CTranslate2 conversion of
-# Oriserve/Whisper-Hindi2Hinglish-Swift (Apache-2.0, whisper-base sized), which
-# emits Hindi romanized into Latin script rather than Devanagari. That matters:
-# ydotool maps characters to US-layout keycodes and would silently drop
-# Devanagari entirely. Downloaded on first use (~290 MB) to ~/.cache/huggingface.
-HINGLISH_MODEL = "umarbashirr/faster-whisper-hindi2hinglish-swift-ct2"
-
 DEFAULT_CONFIG = {
     "model": "base.en",
-    "hinglish_model": HINGLISH_MODEL,
+    # Empty means "use the managed model" — a CTranslate2 conversion of
+    # Oriserve/Whisper-Hindi2Hinglish-Swift (Apache-2.0, whisper-base sized)
+    # that baatsun_models.py fetches from GitHub Releases on first use. It
+    # emits Hindi romanized into Latin script rather than Devanagari, which
+    # matters because ydotool maps characters to US-layout keycodes and would
+    # silently drop Devanagari. Set this to a faster-whisper model name, a
+    # HuggingFace CT2 repo id, or a local directory to override.
+    "hinglish_model": "",
     "compute_type": "int8",
     "hotkey": "ctrl+super",
     "language": "english",
@@ -40,14 +40,18 @@ LANGUAGE_LABELS = {
 
 
 def resolve_language(cfg):
-    """Return (model_id, whisper_language) for the configured language.
+    """Return (model, whisper_language) for the configured language.
+
+    `model` is None for Hinglish-with-no-override, meaning the caller should
+    fetch the managed model via baatsun_models.ensure_hinglish_model(). That
+    indirection keeps this module stdlib-only and free of any download logic.
 
     Both profiles pass "en". The Hinglish model was fine-tuned against the
     <|en|> token — that is precisely what makes it emit Latin script instead of
     Devanagari — so passing "hi" would regress it toward Devanagari output.
     """
     if cfg.get("language") == "hinglish":
-        return cfg.get("hinglish_model") or HINGLISH_MODEL, "en"
+        return cfg.get("hinglish_model") or None, "en"
     return cfg.get("model") or DEFAULT_CONFIG["model"], "en"
 
 

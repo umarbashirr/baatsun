@@ -20,11 +20,14 @@ import time
 
 from evdev import InputDevice, ecodes, list_devices
 
+import baatsun_models
 from baatsun_config import load_config, resolve_language
 
 config = load_config()
 
 LANGUAGE = config.get("language", "english")
+# None here means the managed Hinglish model, resolved in main() because it may
+# need downloading and that shouldn't happen at import time.
 _profile_model, WHISPER_LANGUAGE = resolve_language(config)
 
 MODEL_SIZE = os.environ.get("BAATSUN_MODEL") or _profile_model
@@ -362,9 +365,18 @@ def main():
     load_history()
     log(f"loaded {len(history)} history entries from {HISTORY_PATH}")
 
-    log(f"language {LANGUAGE}, loading model {MODEL_SIZE} ({COMPUTE_TYPE}, cpu)...")
-    log("(first use of a new model downloads it to ~/.cache/huggingface — this can take a while)")
-    model = WhisperModel(MODEL_SIZE, device="cpu", compute_type=COMPUTE_TYPE)
+    model_spec = MODEL_SIZE
+    if model_spec is None:
+        try:
+            model_spec = baatsun_models.ensure_hinglish_model(log)
+        except Exception as exc:
+            log(f"could not fetch the Hinglish model: {exc}")
+            log(f"falling back to {config['model']} (English) — fix the network "
+                f"issue and restart, or set 'hinglish_model' in config.json")
+            model_spec = config["model"]
+
+    log(f"language {LANGUAGE}, loading model {model_spec} ({COMPUTE_TYPE}, cpu)...")
+    model = WhisperModel(model_spec, device="cpu", compute_type=COMPUTE_TYPE)
     log("model loaded")
 
     start_hotkey_listener()
