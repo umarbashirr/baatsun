@@ -1,0 +1,63 @@
+#!/bin/sh
+# postinst for baatsun: builds the venv the daemon runs from, activates the
+# ydotool udev rule, and gets the invoking user into the 'input' group.
+set -e
+
+VENV=/opt/baatsun/venv
+
+case "$1" in
+    configure)
+        if [ ! -x "$VENV/bin/python3" ]; then
+            echo "baatsun: creating virtualenv at $VENV ..."
+            python3 -m venv "$VENV"
+        fi
+
+        echo "baatsun: installing faster-whisper + numpy into the virtualenv (needs network access)..."
+        "$VENV/bin/pip" install --upgrade pip --quiet
+        "$VENV/bin/pip" install --upgrade faster-whisper numpy --quiet
+
+        chmod -R a+rX /opt/baatsun
+
+        udevadm control --reload-rules >/dev/null 2>&1 || true
+        udevadm trigger --name-match=uinput >/dev/null 2>&1 || true
+
+        TARGET_USER="${SUDO_USER:-}"
+        if [ -z "$TARGET_USER" ] && [ -n "${PKEXEC_UID:-}" ]; then
+            TARGET_USER="$(getent passwd "$PKEXEC_UID" | cut -d: -f1)"
+        fi
+        if [ -n "$TARGET_USER" ] && ! id "$TARGET_USER" >/dev/null 2>&1; then
+            TARGET_USER=""
+        fi
+
+        NEED_RELOGIN=""
+        if [ -n "$TARGET_USER" ]; then
+            if ! id -nG "$TARGET_USER" 2>/dev/null | tr ' ' '\n' | grep -qx input; then
+                usermod -aG input "$TARGET_USER"
+                echo "baatsun: added '$TARGET_USER' to the 'input' group."
+                NEED_RELOGIN=1
+            fi
+        fi
+
+        echo ""
+        echo "Baatsun installed. To finish setup:"
+        echo ""
+        STEP=1
+        if [ -z "$TARGET_USER" ]; then
+            echo "  $STEP. Add yourself to the 'input' group (needed for ydotool):"
+            echo "       sudo usermod -aG input \"\$USER\""
+            echo "     Then log out and back in."
+            STEP=$((STEP + 1))
+        elif [ -n "$NEED_RELOGIN" ]; then
+            echo "  $STEP. Log out and back in (so the new 'input' group membership takes effect)."
+            STEP=$((STEP + 1))
+        fi
+        echo "  $STEP. Run: systemctl --user enable --now baatsun"
+        echo ""
+        echo "The tray icon autostarts on next login; launch it now with 'baatsun-tray',"
+        echo "or open the 'Baatsun' app from your launcher. Full docs:"
+        echo "https://github.com/umarbashirr/baatsun#readme"
+        echo ""
+        ;;
+esac
+
+exit 0

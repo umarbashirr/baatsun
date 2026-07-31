@@ -2,7 +2,7 @@
 Type=Application
 Name=Baatsun
 Comment=Transcript history, recording controls, and settings for baatsun
-Exec=/home/xclore/projects/baatsun/bin/baatsun-gui
+Exec=baatsun-gui
 Icon=audio-input-microphone
 Terminal=false
 Categories=Utility;

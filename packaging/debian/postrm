@@ -1,0 +1,13 @@
+#!/bin/sh
+# postrm for baatsun: remove the venv we built in postinst (not tracked by
+# dpkg since it's generated at install time). Never touches user data under
+# ~/.config/baatsun or ~/.local/share/baatsun.
+set -e
+
+case "$1" in
+    remove|purge)
+        rm -rf /opt/baatsun
+        ;;
+esac
+
+exit 0

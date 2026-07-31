@@ -109,7 +109,40 @@ compositor.
 
 ## Installation
 
-### 1. Clone and install dependencies
+### Quick install (Ubuntu/Debian)
+
+No clone needed — this downloads the latest `.deb` from
+[Releases](https://github.com/umarbashirr/baatsun/releases) and installs it
+with `apt`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/umarbashirr/baatsun/main/install.sh | sudo bash
+```
+
+This pulls in all system dependencies (`ydotool`, GTK4/libadwaita, PipeWire)
+automatically via `apt`, builds the `faster-whisper`/`numpy` virtualenv under
+`/opt/baatsun`, activates the ydotool udev rule, and adds you to the `input`
+group. Watch the output at the end for next steps — typically:
+
+1. Log out and back in (one-time, so the new `input` group membership takes
+   effect).
+2. `systemctl --user enable --now baatsun`
+
+Then skip ahead to [Usage](#usage). The tray icon autostarts on your next
+login (or run `baatsun-tray` now), and "Baatsun" shows up in your app
+launcher.
+
+Prefer to grab the file yourself instead of piping a script into `sudo`?
+Download the `.deb` from the
+[Releases page](https://github.com/umarbashirr/baatsun/releases) and run
+`sudo apt install ./baatsun_*_all.deb`.
+
+### Build from source
+
+Only needed if you're hacking on baatsun itself — the quick install above is
+the recommended path for normal use.
+
+#### 1. Clone and install dependencies
 
 ```bash
 git clone https://github.com/umarbashirr/baatsun.git
@@ -119,9 +152,16 @@ sudo apt install -y python3-venv python3-pip ydotool
 
 python3 -m venv venv
 venv/bin/pip install faster-whisper numpy
+
+mkdir -p ~/.local/bin
+ln -sf "$(pwd)"/bin/baatsun-{gui,tray,toggle} ~/.local/bin/
 ```
 
-### 2. Let ydotool write to /dev/uinput without root
+The `ln -sf` step puts `baatsun-gui`/`baatsun-tray`/`baatsun-toggle` on your
+`PATH` (assuming `~/.local/bin` is on it, the default on Ubuntu/GNOME) so the
+desktop entries in steps 5 and 6 below can find them.
+
+#### 2. Let ydotool write to /dev/uinput without root
 
 This build of `ydotool` talks to `/dev/uinput` directly — there's no
 `ydotoold` daemon involved, so the device needs to be group-writable instead
@@ -144,7 +184,7 @@ groups   # should list "input"
 ydotool type "hello"   # click into any text field first
 ```
 
-### 3. Install and enable the daemon as a systemd user service
+#### 3. Install and enable the daemon as a systemd user service
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -166,7 +206,7 @@ The first startup takes a few seconds while faster-whisper downloads the
 No keyboard shortcut needs to be registered anywhere — the daemon watches
 the keyboard directly.
 
-### 4. Install the app window and tray icon dependencies
+#### 4. Install the app window and tray icon dependencies
 
 `src/baatsun_gui.py` (GTK4 + libadwaita) needs PyGObject and the GTK4/
 libadwaita typelibs on your system Python:
@@ -185,27 +225,27 @@ On GNOME, tray icons also need the **"AppIndicator and KStatusNotifierItem
 Support"** Shell extension — already enabled on Ubuntu's default GNOME
 session (`ubuntu-appindicators@ubuntu.com`); on other GNOME setups, install
 and enable that extension first, or skip the tray icon and just use
-`bin/baatsun-gui` directly.
+`baatsun-gui` directly.
 
-### 5. (Optional) autostart the tray icon on login
+#### 5. (Optional) autostart the tray icon on login
 
 ```bash
 mkdir -p ~/.config/autostart
 cp autostart/baatsun-tray.desktop ~/.config/autostart/
 ```
 
-Without this, launch it manually with `bin/baatsun-tray` (or run
-`bin/baatsun-gui` directly to just open the history window, no tray icon).
+Without this, launch it manually with `baatsun-tray` (or run `baatsun-gui`
+directly to just open the history window, no tray icon).
 
-### 6. (Optional) add "Baatsun" to your app launcher
+#### 6. (Optional) add "Baatsun" to your app launcher
 
 ```bash
 mkdir -p ~/.local/share/applications
 cp desktop/baatsun-gui.desktop ~/.local/share/applications/
 ```
 
-Makes `bin/baatsun-gui` launchable from your app launcher like a normal
-installed app, in addition to the tray icon and running it from a terminal.
+Makes `baatsun-gui` launchable from your app launcher like a normal installed
+app, in addition to the tray icon and running it from a terminal.
 
 ## Usage
 
@@ -216,16 +256,16 @@ installed app, in addition to the tray icon and running it from a terminal.
 4. Release either key → "Transcribing…" then the text is typed in and
    appended to the history window.
 
-`bin/baatsun-toggle` also exists as a manual/scriptable alternative (sends a
+`baatsun-toggle` also exists as a manual/scriptable alternative (sends a
 toggle command over the daemon's unix socket) — useful for testing without
 touching the keyboard, but not needed for day-to-day use.
 
 ### The app window
 
-- **Tray icon** (`bin/baatsun-tray`, or autostarted per step 5 above) — click
+- **Tray icon** (`baatsun-tray`, or autostarted per step 5 above) — click
   it → "Show History" opens the window; the icon itself changes glyph for
   idle/listening/transcribing so you get feedback without opening anything.
-- **Window only** (`bin/baatsun-gui`, or the "Baatsun" entry in your app
+- **Window only** (`baatsun-gui`, or the "Baatsun" entry in your app
   launcher per step 6) — skip the tray icon and open the window directly;
   closing it hides rather than quits, so re-opening it (from the tray, app
   launcher, or a terminal) re-presents the same window instead of starting a
@@ -261,8 +301,11 @@ Defaults live in `src/baatsun_config.py`:
   `ctrl+shift`.
 
 For scripted/headless setups, `BAATSUN_MODEL` and `BAATSUN_COMPUTE_TYPE` env
-vars in `systemd/baatsun.service` still override the config file (there's no
-env var for hotkey — use the Settings panel or edit config.json directly).
+vars still override the config file (there's no env var for hotkey — use the
+Settings panel or edit config.json directly). Set them by editing
+`systemd/baatsun.service` before step 3 if you built from source, or with
+`systemctl --user edit baatsun.service` (adds a drop-in override, so it
+survives package upgrades) if you used the `.deb`.
 
 ## Privacy
 

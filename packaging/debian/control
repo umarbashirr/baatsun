@@ -1,0 +1,17 @@
+Package: baatsun
+Version: __VERSION__
+Section: sound
+Priority: optional
+Architecture: all
+Depends: python3 (>= 3.10), python3-venv, python3-pip, python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, ydotool, pipewire-bin | pipewire
+Recommends: gir1.2-ayatanaappindicator3-0.1
+Maintainer: Umar Bashir Rather <mail.umarbashir@gmail.com>
+Homepage: https://github.com/umarbashirr/baatsun
+Description: Offline push-to-talk voice dictation daemon
+ Baatsun is a voice dictation tool for Linux: hold Ctrl+Super anywhere,
+ speak, release, and the transcribed text (via faster-whisper, fully
+ offline) is typed into whatever window has focus, via ydotool. Reads
+ the keyboard directly below the compositor, so no shortcut needs to be
+ registered anywhere and it works the same way on any desktop
+ environment. Includes a tray icon and a searchable history window for
+ browsing, copying, and retyping past transcripts.

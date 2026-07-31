@@ -1,0 +1,15 @@
+[Unit]
+Description=Voice dictation daemon (baatsun)
+After=default.target sound.target
+
+[Service]
+ExecStart=/opt/baatsun/venv/bin/python3 /opt/baatsun/src/baatsun.py
+# Model/compute-type/hotkey come from ~/.config/baatsun/config.json,
+# editable via the Settings panel in baatsun-gui. Uncomment to force a
+# value regardless of that file (env var always wins over the config file):
+# Environment=BAATSUN_MODEL=base.en
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -3,7 +3,10 @@
 import os
 import sys
 
+INSTALLED_SCRIPT = "/opt/baatsun/src/baatsun_gui.py"
 HERE = os.path.dirname(os.path.abspath(__file__))
-GUI_SCRIPT = os.path.join(HERE, "..", "src", "baatsun_gui.py")
+CHECKOUT_SCRIPT = os.path.join(HERE, "..", "src", "baatsun_gui.py")
+
+GUI_SCRIPT = INSTALLED_SCRIPT if os.path.exists(INSTALLED_SCRIPT) else CHECKOUT_SCRIPT
 
 os.execv(sys.executable, [sys.executable, GUI_SCRIPT] + sys.argv[1:])
