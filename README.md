@@ -4,9 +4,42 @@
 
 A voice dictation tool for Linux: **hold Ctrl+Super (Windows key) anywhere**,
 speak, **release** — it transcribes locally (faster-whisper, CPU) and types
-the text into whatever window/input box is focused (via ydotool). True
-push-to-talk, not toggle. Runs fully offline; nothing you say leaves your
-machine.
+the text into whatever window or input box is focused (via `ydotool`). True
+push-to-talk, not toggle. Runs fully offline; nothing you say ever leaves
+your machine.
+
+## Features
+
+- **Push-to-talk, not toggle** — hold the hotkey, speak, release. No mode to
+  forget you're in.
+- **Fully offline** — transcription runs locally on CPU via
+  [faster-whisper](https://github.com/SYSTRAN/faster-whisper). No audio or
+  text is sent anywhere.
+- **Works anywhere** — types directly into whatever window has focus, so it
+  works in any app, not just ones with dictation support built in.
+- **No shortcut registration needed** — reads the keyboard directly below the
+  compositor, so it works the same way on any desktop environment.
+- **Tray icon + history window** — see live recording state at a glance, and
+  browse/search/copy/retype past transcripts.
+- **Configurable** — model size, compute type, and hotkey combo, all
+  adjustable from the Settings panel.
+
+## Requirements
+
+- Linux with [PipeWire](https://pipewire.org/) for audio capture (default on
+  most modern distros, including Ubuntu 22.10+).
+- Python 3.10+.
+- [`ydotool`](https://github.com/ouija/ydotool) for typing into the focused
+  window (works under both X11 and Wayland).
+- GTK4 + libadwaita and PyGObject for the app window; GTK3 + AppIndicator
+  bindings for the tray icon (optional — see below).
+- Root/sudo access for one-time device permission setup (see below) — the
+  daemon itself runs as your normal user afterwards.
+
+Developed and tested on Ubuntu/GNOME; the core daemon doesn't depend on
+GNOME specifically; the tray icon depends on your desktop supporting the
+[AppIndicator](https://github.com/AyatanaIndicators) protocol (GNOME needs an
+extension for this — see step 3 below).
 
 ## Architecture
 
@@ -56,36 +89,43 @@ src/baatsun_tray.py (GTK3 + AppIndicator, separate process, system Python)
    a second window if it's already running (GApplication D-Bus activation).
 ```
 
-Transcript history used to only ever appear as a `notify-send` popup that
-vanished after ~1.5s. It's now persisted to
-`~/.local/share/baatsun/history.json` and shown in `baatsun_gui.py`'s window.
-The daemon no longer sends any desktop notifications at all — state
-(listening/transcribing/idle) is only broadcast over the unix socket, which
-the tray icon glyph and the GUI header subtitle already reflect live.
+Transcript history is persisted to `~/.local/share/baatsun/history.json` and
+shown in `baatsun_gui.py`'s window. The daemon doesn't send any desktop
+notifications — state (listening/transcribing/idle) is only broadcast over
+the unix socket, which the tray icon glyph and the GUI header subtitle
+reflect live.
 
-Why this shape: GNOME on Wayland has no API for an app to grab a global
+**Why this shape:** GNOME on Wayland has no API for an app to grab a global
 hotkey itself, and a GNOME custom keyboard shortcut only fires on key
 *press*, never on release — no good for hold-to-talk. Reading the keyboard
 directly via `evdev` (`/dev/input/eventN`) sits below the compositor, so it
 sees real press/release events regardless of desktop environment, and
 requires no shortcut to be registered anywhere. It's a passive read (no
-`EVIOCGRAB`), so normal typing and GNOME's own shortcuts are unaffected.
-Wayland also blocks synthetic key injection into arbitrary windows for
-security, so text entry goes through `ydotool`, which writes directly to
-`/dev/uinput` (kernel level) instead of going through the compositor.
+`EVIOCGRAB`), so normal typing and your desktop's own shortcuts are
+unaffected. Wayland also blocks synthetic key injection into arbitrary
+windows for security, so text entry goes through `ydotool`, which writes
+directly to `/dev/uinput` (kernel level) instead of going through the
+compositor.
 
-## One-time setup
+## Installation
 
-Already done: `sudo apt install -y python3.12-venv python3-pip ydotool`,
-venv created at `venv/`, `faster-whisper` + `numpy` installed into it.
+### 1. Clone and install dependencies
 
-Two things are still needed, both require `sudo`:
+```bash
+git clone https://github.com/umarbashirr/baatsun.git
+cd baatsun
 
-### 1. Let ydotool write to /dev/uinput without root
+sudo apt install -y python3-venv python3-pip ydotool
 
-This ydotool build (0.1.8) talks to `/dev/uinput` directly — there's no
-`ydotoold` daemon in this version, so it needs the device to be group-writable
-instead of running everything as root.
+python3 -m venv venv
+venv/bin/pip install faster-whisper numpy
+```
+
+### 2. Let ydotool write to /dev/uinput without root
+
+This build of `ydotool` talks to `/dev/uinput` directly — there's no
+`ydotoold` daemon involved, so the device needs to be group-writable instead
+of running everything as root.
 
 ```bash
 sudo cp systemd/60-ydotool.rules /etc/udev/rules.d/60-ydotool.rules
@@ -94,8 +134,8 @@ sudo udevadm trigger /sys/class/misc/uinput  # or just reboot
 sudo usermod -aG input "$USER"
 ```
 
-**You must log out and back in** (group membership only applies to new
-login sessions) before `ydotool type` will work without sudo.
+**You must log out and back in** (group membership only applies to new login
+sessions) before `ydotool type` will work without sudo.
 
 Verify after re-login:
 
@@ -104,7 +144,7 @@ groups   # should list "input"
 ydotool type "hello"   # click into any text field first
 ```
 
-### 2. Install and enable the daemon as a systemd user service
+### 3. Install and enable the daemon as a systemd user service
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -126,23 +166,28 @@ The first startup takes a few seconds while faster-whisper downloads the
 No keyboard shortcut needs to be registered anywhere — the daemon watches
 the keyboard directly.
 
-### 3. Install the tray icon's GObject bindings
+### 4. Install the app window and tray icon dependencies
 
-`src/baatsun_gui.py` (GTK4 + libadwaita) runs on this system's Python as-is —
-those bindings were already present. `src/baatsun_tray.py` additionally needs
-the AppIndicator typelib, which wasn't installed:
+`src/baatsun_gui.py` (GTK4 + libadwaita) needs PyGObject and the GTK4/
+libadwaita typelibs on your system Python:
+
+```bash
+sudo apt install -y python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
+```
+
+`src/baatsun_tray.py` additionally needs the AppIndicator typelib:
 
 ```bash
 sudo apt install -y gir1.2-ayatanaappindicator3-0.1
 ```
 
-On GNOME/Wayland, tray icons also need the **"AppIndicator and
-KStatusNotifierItem Support"** Shell extension — already enabled on Ubuntu's
-default GNOME session (`ubuntu-appindicators@ubuntu.com`); if you're on a
-different GNOME setup and don't see the icon appear, install/enable that
-extension first.
+On GNOME, tray icons also need the **"AppIndicator and KStatusNotifierItem
+Support"** Shell extension — already enabled on Ubuntu's default GNOME
+session (`ubuntu-appindicators@ubuntu.com`); on other GNOME setups, install
+and enable that extension first, or skip the tray icon and just use
+`bin/baatsun-gui` directly.
 
-### 4. (Optional) autostart the tray icon on login
+### 5. (Optional) autostart the tray icon on login
 
 ```bash
 mkdir -p ~/.config/autostart
@@ -152,17 +197,17 @@ cp autostart/baatsun-tray.desktop ~/.config/autostart/
 Without this, launch it manually with `bin/baatsun-tray` (or run
 `bin/baatsun-gui` directly to just open the history window, no tray icon).
 
-### 5. (Optional) add "Baatsun" to the GNOME app grid
+### 6. (Optional) add "Baatsun" to your app launcher
 
 ```bash
 mkdir -p ~/.local/share/applications
 cp desktop/baatsun-gui.desktop ~/.local/share/applications/
 ```
 
-Makes `bin/baatsun-gui` launchable from Activities/search like a normal
+Makes `bin/baatsun-gui` launchable from your app launcher like a normal
 installed app, in addition to the tray icon and running it from a terminal.
 
-## Using it
+## Usage
 
 1. Click into any text field.
 2. Hold **Ctrl+Super** → recording starts (tray icon glyph switches to a
@@ -171,19 +216,19 @@ installed app, in addition to the tray icon and running it from a terminal.
 4. Release either key → "Transcribing…" then the text is typed in and
    appended to the history window.
 
-`bin/baatsun-toggle` still exists as a manual/scriptable alternative (sends a
+`bin/baatsun-toggle` also exists as a manual/scriptable alternative (sends a
 toggle command over the daemon's unix socket) — useful for testing without
 touching the keyboard, but not needed for day-to-day use.
 
 ### The app window
 
-- **Tray icon** (`bin/baatsun-tray`, or autostarted per step 4 above) — click
+- **Tray icon** (`bin/baatsun-tray`, or autostarted per step 5 above) — click
   it → "Show History" opens the window; the icon itself changes glyph for
   idle/listening/transcribing so you get feedback without opening anything.
-- **Window only** (`bin/baatsun-gui`, or the "Baatsun" entry in the app
-  grid per step 5) — skip the tray icon and open the window directly;
+- **Window only** (`bin/baatsun-gui`, or the "Baatsun" entry in your app
+  launcher per step 6) — skip the tray icon and open the window directly;
   closing it hides rather than quits, so re-opening it (from the tray, app
-  grid, or a terminal) re-presents the same window instead of starting a
+  launcher, or a terminal) re-presents the same window instead of starting a
   second one.
 
 Inside the window:
@@ -202,7 +247,7 @@ Inside the window:
 History persists to `~/.local/share/baatsun/history.json` across daemon
 restarts; the toolbar's clear-history button wipes it.
 
-## Config
+## Configuration
 
 The Settings panel in `baatsun-gui` is the normal way to change these — it
 writes `~/.config/baatsun/config.json` and restarts the daemon for you.
@@ -219,6 +264,35 @@ For scripted/headless setups, `BAATSUN_MODEL` and `BAATSUN_COMPUTE_TYPE` env
 vars in `systemd/baatsun.service` still override the config file (there's no
 env var for hotkey — use the Settings panel or edit config.json directly).
 
+## Privacy
+
+Baatsun runs entirely offline — audio never leaves your machine, and nothing
+is logged beyond the transcript history you can see and clear yourself in
+the app window.
+
+One thing worth being explicit about: reading raw evdev means the daemon
+sees every keystroke typed anywhere on your system, not just the hotkey. It
+only *acts* on Ctrl/Super state and doesn't log anything else, but this is
+effectively keylogger-capable code, so review `src/baatsun.py` yourself
+before trusting it with anything sensitive.
+
+## Troubleshooting
+
+- **`ydotool type` does nothing / permission denied** — you likely haven't
+  logged out and back in since being added to the `input` group (step 2
+  above), or the udev rule didn't apply. Check `groups` includes `input`.
+- **Hotkey doesn't trigger recording** — confirm the daemon is running
+  (`systemctl --user status baatsun.service`) and check
+  `journalctl --user -u baatsun.service -f` while pressing the hotkey for
+  errors reading `/dev/input/eventN` (you may need to be in the `input`
+  group for this too).
+- **Tray icon doesn't appear** — on GNOME, make sure the AppIndicator Shell
+  extension is enabled (step 4 above); on other desktops, confirm your
+  status bar supports the AppIndicator/KStatusNotifierItem protocol.
+- **Transcription is slow or inaccurate** — try a different `model`/
+  `compute_type` combination in Settings; smaller models are faster but less
+  accurate, larger models are the reverse.
+
 ## Roadmap / known limitations
 
 - Swapping in a cloud STT API (OpenAI/Deepgram) only touches
@@ -228,16 +302,18 @@ env var for hotkey — use the Settings panel or edit config.json directly).
   `~/.config/baatsun/config.json`) but limited to four curated pairs
   (`baatsun_config.HOTKEY_CHOICES`) rather than an arbitrary key — capturing
   an arbitrary combo would need a "press your new hotkey" UI flow in
-  baatsun_gui.py that doesn't exist yet.
-- Reading raw evdev means the daemon sees every keystroke typed anywhere,
-  not just the hotkey — it only acts on Ctrl/Super state, but this is worth
-  being explicit about (with yourself and later with any other user) as a
-  privacy/trust consideration, since it's effectively keylogger-capable code
-  even though it isn't logging anything today.
+  `baatsun_gui.py` that doesn't exist yet.
+
+## Contributing
+
+Issues and pull requests are welcome. If you're proposing a larger change
+(e.g. a new backend, a different capture mechanism), please open an issue
+first to discuss the approach — see the Architecture section above for how
+the pieces fit together.
 
 ## Author
 
-Umar Bashir Rather — mail.umarbashir@gmail.com
+Umar Bashir Rather
 
 ## License
 
