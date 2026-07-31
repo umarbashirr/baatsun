@@ -217,6 +217,40 @@ def stop_recording_and_transcribe():
             pass
 
 
+def abandon_recording():
+    """Stop an in-flight recording without transcribing it, for shutdown.
+
+    Nothing else will ever come along to end this recording, so without it we
+    leave an orphaned pw-record holding the microphone and a stray wav in
+    /tmp. Discarding rather than transcribing is deliberate: we're on our way
+    out and there'd be no window left to type into.
+
+    Takes state_lock, so a transcription already under way finishes and gets
+    typed first rather than being cut off mid-word.
+    """
+    with state_lock:
+        proc = state["proc"]
+        wav_path = state["wav_path"]
+        state["recording"] = False
+        state["proc"] = None
+        state["wav_path"] = None
+
+    if proc is not None:
+        proc.send_signal(signal.SIGINT)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        log("discarded in-flight recording")
+
+    if wav_path is not None:
+        try:
+            os.remove(wav_path)
+        except OSError:
+            pass
+
+
 def handle_toggle():
     with state_lock:
         if state["recording"]:
@@ -387,14 +421,39 @@ def main():
     os.chmod(SOCKET_PATH, 0o600)
     log(f"listening on {SOCKET_PATH}")
 
+    stopping = threading.Event()
+
     def shutdown(_signum, _frame):
+        # Only set a flag. A signal handler runs in the main thread, so calling
+        # server.shutdown() here would deadlock: it blocks until the serve loop
+        # exits, and if that loop is the thread executing this handler it never
+        # gets back to notice the request. systemd then has to SIGKILL us. So
+        # the serve loop gets its own thread and the main thread does the
+        # stopping, below.
         log("shutting down")
-        server.shutdown()
+        stopping.set()
 
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
 
-    server.serve_forever()
+    serve_thread = threading.Thread(target=server.serve_forever, name="serve")
+    serve_thread.start()
+
+    # Waiting with a timeout rather than indefinitely: a plain wait() is
+    # interruptible by signals on the main thread, but the periodic wakeup makes
+    # that guarantee something we don't have to rely on.
+    while not stopping.wait(0.5):
+        pass
+
+    server.shutdown()
+    serve_thread.join()
+    server.server_close()
+    abandon_recording()
+    try:
+        os.remove(SOCKET_PATH)
+    except OSError:
+        pass
+    log("stopped")
 
 
 if __name__ == "__main__":
