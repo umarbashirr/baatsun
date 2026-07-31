@@ -21,16 +21,13 @@ import time
 from evdev import InputDevice, ecodes, list_devices
 
 import baatsun_models
-from baatsun_config import load_config, resolve_language
+from baatsun_config import CONFIG_PATH, WHISPER_LANGUAGE, load_config, resolve_model
 
 config = load_config()
 
-LANGUAGE = config.get("language", "english")
-# None here means the managed Hinglish model, resolved in main() because it may
-# need downloading and that shouldn't happen at import time.
-_profile_model, WHISPER_LANGUAGE = resolve_language(config)
-
-MODEL_SIZE = os.environ.get("BAATSUN_MODEL") or _profile_model
+# None here means the managed model, resolved in main() because it may need
+# downloading and that shouldn't happen at import time.
+MODEL_SIZE = os.environ.get("BAATSUN_MODEL") or resolve_model(config)
 COMPUTE_TYPE = os.environ.get("BAATSUN_COMPUTE_TYPE") or config["compute_type"]
 SOCKET_PATH = f"/run/user/{os.getuid()}/baatsun.sock"
 SAMPLE_RATE = "16000"
@@ -368,14 +365,19 @@ def main():
     model_spec = MODEL_SIZE
     if model_spec is None:
         try:
-            model_spec = baatsun_models.ensure_hinglish_model(log)
+            model_spec = baatsun_models.ensure_model(log)
         except Exception as exc:
-            log(f"could not fetch the Hinglish model: {exc}")
-            log(f"falling back to {config['model']} (English) — fix the network "
-                f"issue and restart, or set 'hinglish_model' in config.json")
-            model_spec = config["model"]
+            # There is no second model to fall back to any more, and starting
+            # without one would leave a daemon whose hotkey does nothing. Exit
+            # instead: systemd retries (and gives up after its start limit),
+            # and the reason is in the journal either way.
+            log(f"could not fetch the dictation model: {exc}")
+            log("dictation can't run without it — check your network and "
+                f"restart, or point 'model_override' in {CONFIG_PATH} at a "
+                "local model")
+            raise SystemExit(1)
 
-    log(f"language {LANGUAGE}, loading model {model_spec} ({COMPUTE_TYPE}, cpu)...")
+    log(f"loading model {model_spec} ({COMPUTE_TYPE}, cpu)...")
     model = WhisperModel(model_spec, device="cpu", compute_type=COMPUTE_TYPE)
     log("model loaded")
 

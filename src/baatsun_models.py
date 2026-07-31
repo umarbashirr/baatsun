@@ -1,12 +1,13 @@
-"""Fetches the Hinglish model from GitHub Releases on first use.
+"""Fetches the dictation model from GitHub Releases on first use.
 
 Stdlib only, like baatsun_config — no new dependency in the packaged venv.
 
-The English profile uses a stock faster-whisper model name (`base.en`), which
-faster-whisper downloads itself. The Hinglish profile can't work that way: it
-needs a CTranslate2 build of Oriserve/Whisper-Hindi2Hinglish-Swift, which only
-exists as a converted artifact we publish ourselves. We host it as a release
-asset and hand faster-whisper a local directory instead of a model name.
+Baatsun runs a single model for both English and Hinglish: a CTranslate2 build
+of Oriserve/Whisper-Hindi2Hinglish-Swift. A stock faster-whisper model name
+would be less work — faster-whisper downloads those itself — but no stock model
+romanizes Hindi, and this one only exists as a converted artifact we publish
+ourselves. So we host it as a release asset and hand faster-whisper a local
+directory instead of a model name.
 """
 import hashlib
 import os
@@ -17,12 +18,12 @@ import urllib.request
 
 CACHE_DIR = os.path.expanduser("~/.cache/baatsun/models")
 
-HINGLISH_NAME = "hinglish-swift-ct2"
-HINGLISH_URL = (
+MODEL_NAME = "hinglish-swift-ct2"
+MODEL_URL = (
     "https://github.com/umarbashirr/baatsun/releases/download/"
     "models-v1/hinglish-swift-ct2.tar.gz"
 )
-HINGLISH_SHA256 = "d66338496d46ff39c8e22f582987aabc1e9a0b10df7e40261ba8d0f0d000e764"
+MODEL_SHA256 = "d66338496d46ff39c8e22f582987aabc1e9a0b10df7e40261ba8d0f0d000e764"
 # Presence of this file marks an extraction as complete; anything less means a
 # previous run died partway and the directory should be thrown away.
 MARKER = "model.bin"
@@ -54,15 +55,15 @@ def _download(url, dest, log):
     return digest.hexdigest()
 
 
-def ensure_hinglish_model(log=_log):
-    """Return a local path to the Hinglish CT2 model, downloading it if needed.
+def ensure_model(log=_log):
+    """Return a local path to the CT2 model, downloading it if needed.
 
     Raises on download or checksum failure — the caller decides whether that is
     fatal. The extraction is staged in a temp directory and moved into place
     only once complete, so an interrupted run can't leave a half-model behind
     that looks valid on the next start.
     """
-    target = os.path.join(CACHE_DIR, HINGLISH_NAME)
+    target = os.path.join(CACHE_DIR, MODEL_NAME)
     if os.path.exists(os.path.join(target, MARKER)):
         return target
 
@@ -71,28 +72,28 @@ def ensure_hinglish_model(log=_log):
         shutil.rmtree(target, ignore_errors=True)
 
     os.makedirs(CACHE_DIR, exist_ok=True)
-    log(f"fetching Hinglish model (~62 MiB) from {HINGLISH_URL}")
+    log(f"fetching dictation model (~62 MiB) from {MODEL_URL}")
 
     staging = tempfile.mkdtemp(prefix=".hinglish-", dir=CACHE_DIR)
     archive = os.path.join(staging, "model.tar.gz")
     try:
-        actual = _download(HINGLISH_URL, archive, log)
-        if actual != HINGLISH_SHA256:
+        actual = _download(MODEL_URL, archive, log)
+        if actual != MODEL_SHA256:
             raise ValueError(
-                f"checksum mismatch for {HINGLISH_URL}: "
-                f"expected {HINGLISH_SHA256}, got {actual}"
+                f"checksum mismatch for {MODEL_URL}: "
+                f"expected {MODEL_SHA256}, got {actual}"
             )
         log("  checksum verified, extracting...")
 
         with tarfile.open(archive, "r:gz") as tar:
             _safe_extract(tar, staging)
 
-        extracted = os.path.join(staging, HINGLISH_NAME)
+        extracted = os.path.join(staging, MODEL_NAME)
         if not os.path.exists(os.path.join(extracted, MARKER)):
-            raise ValueError(f"archive did not contain {HINGLISH_NAME}/{MARKER}")
+            raise ValueError(f"archive did not contain {MODEL_NAME}/{MARKER}")
 
         os.replace(extracted, target)
-        log(f"  Hinglish model ready at {target}")
+        log(f"  model ready at {target}")
         return target
     finally:
         shutil.rmtree(staging, ignore_errors=True)

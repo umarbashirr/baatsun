@@ -21,12 +21,13 @@ your machine.
   compositor, so it works the same way on any desktop environment.
 - **Tray icon + history window** — see live recording state at a glance, and
   browse/search/copy/retype past transcripts.
-- **English or Hinglish** — dictate in English, or in Hinglish (Hindi and
-  English mixed together), which is typed out in Roman script:
-  "mujhe ek coffee chahiye".
-- **Configurable** — language and hotkey combo are adjustable from the
-  Settings panel; model size and compute type are tunable via config file or
-  env var.
+- **English and Hinglish, one model** — dictate in English, in Hinglish (Hindi
+  and English mixed together), or both in the same sentence. Nothing to switch:
+  Hindi comes out in Roman script, "mujhe ek coffee chahiye".
+- **Runs on modest hardware** — one whisper-base-sized model, int8 on CPU, no
+  GPU expected.
+- **Configurable** — hotkey combo is adjustable from the Settings panel; the
+  model and compute type are tunable via config file or env var.
 
 ## Requirements
 
@@ -69,22 +70,23 @@ src/baatsun.py (background daemon, systemd --user service)
                      window again
 
 src/baatsun_config.py (stdlib only — shared by both Python interpreters below)
-   Reads/writes ~/.config/baatsun/config.json: language, model size, compute
-   type, hotkey combo. baatsun.py reads it at startup (env vars still
-   override, for anyone pinning values in systemd/baatsun.service);
-   baatsun_gui.py's Settings panel writes language + hotkey and restarts the
-   daemon to apply, preserving the model/compute-type keys it doesn't expose.
-   resolve_language() maps the language profile to (model, whisper language
-   token) so that pairing lives in exactly one place; it returns None for the
-   model when the managed Hinglish model should be used.
+   Reads/writes ~/.config/baatsun/config.json: model override, compute type,
+   hotkey combo. baatsun.py reads it at startup (env vars still override, for
+   anyone pinning values in systemd/baatsun.service); baatsun_gui.py's Settings
+   panel writes the hotkey and restarts the daemon to apply, preserving the
+   model/compute-type keys it doesn't expose. resolve_model() returns None when
+   the managed model should be used, keeping this module free of download logic
+   so the GUI's system Python can import it too. load_config() drops keys that
+   aren't in DEFAULT_CONFIG, which is what retires the pre-single-model
+   `language`/`hinglish_model`/`model` keys on upgrade instead of letting an
+   old `"model": "base.en"` quietly pin the daemon to English.
 
 src/baatsun_models.py (stdlib only)
-   Fetches the Hinglish model on first use. The English profile just names a
-   stock model and lets faster-whisper download it, but the Hinglish profile
-   needs a CTranslate2 conversion that only exists as an artifact we publish
-   ourselves — so ensure_hinglish_model() downloads the tarball from this
-   repo's models-v1 release, checks it against a pinned sha256, extracts via a
-   staging directory (so an interrupted run can't leave a half-model that
+   Fetches the one model on first use. A stock faster-whisper name would
+   download itself, but no stock model romanizes Hindi and this one exists only
+   as a conversion we publish — so ensure_model() downloads the tarball from
+   this repo's models-v1 release, checks it against a pinned sha256, extracts
+   via a staging directory (so an interrupted run can't leave a half-model that
    looks valid), and hands baatsun.py a local path. Cached under
    ~/.cache/baatsun/models/.
 
@@ -93,7 +95,7 @@ src/baatsun_gui.py (GTK4 + libadwaita, system Python — needs PyGObject)
    ("Listening…"/"Transcribing…"), a search box that filters history live,
    and per-transcript copy/retype/delete actions. Fetches `history` on
    connect, then stays subscribed for live updates. A gear icon opens
-   Settings (language + hotkey — writes baatsun_config and runs
+   Settings (hotkey — writes baatsun_config and runs
    `systemctl --user restart baatsun.service`). Closing the window hides
    it rather than quitting, so the tray icon can re-present it instantly.
 
@@ -218,8 +220,10 @@ systemctl --user status baatsun.service
 journalctl --user -u baatsun.service -f
 ```
 
-The first startup takes a few seconds while faster-whisper downloads the
-`base.en` model (cached under `~/.cache/huggingface` afterwards).
+The first startup downloads the dictation model (~62 MB, cached under
+`~/.cache/baatsun/models/` afterwards) and the hotkey won't respond until that
+lands — watch the log for download progress, then `model loaded`. Later starts
+take a couple of seconds.
 
 No keyboard shortcut needs to be registered anywhere — the daemon watches
 the keyboard directly.
@@ -297,12 +301,11 @@ Inside the window:
 - The search box filters history as you type.
 - Each transcript row has copy / retype (re-runs `ydotool type` into
   whatever's currently focused) / delete buttons.
-- The gear icon opens **Settings** — the dictation language (English /
-  Hinglish) and the hotkey combo (Ctrl+Super / Ctrl+Alt / Alt+Super /
-  Ctrl+Shift). Applying restarts the daemon
+- The gear icon opens **Settings** — the hotkey combo (Ctrl+Super / Ctrl+Alt /
+  Alt+Super / Ctrl+Shift). There's no language setting: one model handles
+  English and Hinglish. Applying restarts the daemon
   (`systemctl --user restart baatsun.service`) to pick it up, which takes a
-  few seconds while the model reloads — longer the first time you pick
-  Hinglish, since the model (~62 MB) downloads then.
+  few seconds while the model reloads.
 
 History persists to `~/.local/share/baatsun/history.json` across daemon
 restarts; the toolbar's clear-history button wipes it.
@@ -312,51 +315,58 @@ restarts; the toolbar's clear-history button wipes it.
 All settings live in `~/.config/baatsun/config.json`; defaults are defined in
 `src/baatsun_config.py`.
 
-### Language and hotkey — Settings panel
+### Hotkey — Settings panel
 
-- **language** — `english` (default) / `hinglish`.
 - **hotkey** — `ctrl+super` (default) / `ctrl+alt` / `alt+super` /
   `ctrl+shift`.
 
-The gear icon in `baatsun-gui` is the normal way to change these. It writes
-the config file and restarts the daemon for you, leaving the values below
+The gear icon in `baatsun-gui` is the normal way to change this. It writes the
+config file and restarts the daemon for you, leaving the values below
 untouched.
 
-**Hinglish** is for Hindi and English mixed together in one sentence, the way
-it's actually spoken — "mujhe ek coffee chahiye", "meeting kal schedule kar
-do". Output is **Roman script, not Devanagari**: you get `mujhe ek coffee
+### The model
+
+There's one model, and it handles English and Hinglish together — there is no
+language setting to get wrong, and no second download. **Hinglish** here means
+Hindi and English mixed in one sentence, the way it's actually spoken: "mujhe
+ek coffee chahiye", "meeting kal schedule kar do".
+
+Hindi comes out in **Roman script, not Devanagari**: you get `mujhe ek coffee
 chahiye`, not `मुझे एक कॉफ़ी चाहिए`. That's deliberate — `ydotool` types by
-mapping characters to US-layout keycodes, and Devanagari has no keycodes to
-map to, so it would be silently dropped.
+mapping characters to US-layout keycodes, and Devanagari has no keycodes to map
+to, so it would be silently dropped.
 
-Picking Hinglish switches the daemon to a different model — a CTranslate2
-build of
+The model is a CTranslate2 build of
 [`Oriserve/Whisper-Hindi2Hinglish-Swift`](https://huggingface.co/Oriserve/Whisper-Hindi2Hinglish-Swift)
-(Apache-2.0), fine-tuned to emit romanized Hinglish. Being whisper-base sized,
-it keeps roughly the same transcription latency as the English default.
+(Apache-2.0), fine-tuned to emit romanized Hinglish. It's whisper-base sized and
+runs int8 on CPU, which is what keeps it usable on low-end machines. Being a
+Hindi-dominant fine-tune, pure-English accuracy is a little below a dedicated
+`base.en` — the tradeoff for never having to switch models mid-thought.
 
-The first time you select Hinglish, the daemon downloads that model (~62 MB)
-from this repo's [`models-v1`](https://github.com/umarbashirr/baatsun/releases/tag/models-v1)
-release into `~/.cache/baatsun/models/`, verifying it against a pinned
-sha256. The hotkey won't respond until it finishes — watch
+On first use the daemon downloads it (~62 MB) from this repo's
+[`models-v1`](https://github.com/umarbashirr/baatsun/releases/tag/models-v1)
+release into `~/.cache/baatsun/models/`, verifying it against a pinned sha256.
+The hotkey won't respond until it finishes — watch
 `journalctl --user -u baatsun.service -f` for progress. If the download fails
-the daemon logs the reason and falls back to English rather than dying.
+the daemon logs why and exits rather than starting up unable to transcribe;
+systemd retries it.
 
-- **hinglish_model** — empty by default, meaning "use the managed model
-  above". Set it to a faster-whisper model name, a HuggingFace CT2 repo id, or
-  a local directory to override. Accuracy on the default is decent but below
-  the English model; if you need better and can accept much slower
-  transcription on CPU, point this at a CT2 conversion of Oriserve's larger
-  `Apex` or `Prime` models.
+Whisper is decoded with the `en` language token for both languages. For
+Hinglish that isn't a compromise — the fine-tune was trained against `<|en|>`,
+and that's precisely what makes it produce Latin script.
 
-### Model and compute type — config file or env var
+### Model override and compute type — config file or env var
 
-These aren't exposed in the Settings panel; `base.en`/`int8` suits most
-machines, and the wrong combination mostly just makes transcription slower.
-Change them if you need to:
+Neither is exposed in the Settings panel; the defaults suit most machines, and
+the wrong compute type mostly just makes transcription slower. Change them if
+you need to:
 
-- **model** — faster-whisper size: `tiny.en` / `base.en` (default) /
-  `small.en` (better accuracy, more latency) / `medium.en`.
+- **model_override** — empty by default, meaning "use the managed model above".
+  Set it to a faster-whisper model name (`base.en`, `small`…), a HuggingFace CT2
+  repo id, or a local directory to run something else. If you have the CPU
+  headroom and want better accuracy on both languages, point this at a CT2
+  conversion of Oriserve's larger `Apex` or `Prime` models; note that anything
+  not Hinglish-tuned gives up the romanized-Hindi behaviour.
 - **compute_type** — `int8` (default, fastest on CPU) / `int8_float16` /
   `float16` / `float32`.
 
@@ -367,9 +377,13 @@ editing `systemd/baatsun.service` before step 3 if you built from source, or
 with `systemctl --user edit baatsun.service` (adds a drop-in override, so it
 survives package upgrades) if you used the `.deb`.
 
-Switching to a model you haven't used before downloads it on the next daemon
-start (~150 MB for `base.en`, more for the larger sizes), cached under
+A `model_override` naming a stock faster-whisper model downloads it on the next
+daemon start (~150 MB for `base.en`, more for larger sizes), cached under
 `~/.cache/huggingface`.
+
+Upgrading from a version that had the English/Hinglish switch: the old
+`language`, `model` and `hinglish_model` keys in your config are ignored and
+dropped the next time settings are saved. Nothing to do by hand.
 
 ## Privacy
 
@@ -396,17 +410,23 @@ before trusting it with anything sensitive.
 - **Tray icon doesn't appear** — on GNOME, make sure the AppIndicator Shell
   extension is enabled (step 4 above); on other desktops, confirm your
   status bar supports the AppIndicator/KStatusNotifierItem protocol.
-- **Transcription is slow or inaccurate** — try a different `model`/
+- **Transcription is slow or inaccurate** — try a different `model_override`/
   `compute_type` combination (see [Configuration](#configuration)); smaller
   models are faster but less accurate, larger models are the reverse.
-- **Nothing happens after switching to Hinglish** — the first run downloads a
-  ~62 MB model and the hotkey stays unresponsive until it lands. Check
+- **Nothing happens on a fresh install** — the first run downloads the ~62 MB
+  model and the hotkey stays unresponsive until it lands. Check
   `journalctl --user -u baatsun.service -f`; you should see download progress,
-  then `model loaded`. If the download failed it says so and falls back to
-  English; delete `~/.cache/baatsun/models/` to retry from scratch.
-- **Hinglish transcribes pure English badly** — expected. The Hinglish model
-  is tuned for Hindi-dominant speech; switch back to English in Settings when
-  you're dictating only English.
+  then `model loaded`.
+- **Daemon won't start, log says it couldn't fetch the model** — it exits
+  rather than run without one, and systemd retries a few times before giving
+  up. Fix the network and `systemctl --user restart baatsun.service`. If a
+  previous attempt left something broken behind, delete
+  `~/.cache/baatsun/models/` to retry from scratch. To run fully offline, set
+  `model_override` to a local model directory.
+- **Pure English is a bit less accurate than you'd like** — the single model is
+  a Hindi-dominant fine-tune, so this is the known cost of not having a
+  language switch. If you dictate almost only English, set
+  `model_override` to `base.en`; you'll lose romanized Hindi.
 
 ## Roadmap / known limitations
 
@@ -418,13 +438,14 @@ before trusting it with anything sensitive.
   (`baatsun_config.HOTKEY_CHOICES`) rather than an arbitrary key — capturing
   an arbitrary combo would need a "press your new hotkey" UI flow in
   `baatsun_gui.py` that doesn't exist yet.
-- Only English and Hinglish are offered. Adding a language that writes in a
-  non-Latin script (Hindi in Devanagari, say) needs more than a new entry in
-  `LANGUAGE_CHOICES`: `ydotool type` can only produce US-layout keycodes, so
-  the typing path in `stop_recording_and_transcribe()` would have to be
-  replaced with a clipboard-and-paste approach first.
-- Switching language restarts the daemon and reloads the model, so it isn't
-  instant — there's no per-recording language switch.
+- One model covers English and Hinglish, which costs some pure-English
+  accuracy versus a dedicated `base.en`. Recovering both would mean holding two
+  models in memory and routing per recording, which is more RAM than the
+  low-end machines this targets have to spare.
+- Any language that writes in a non-Latin script (Hindi in Devanagari, say)
+  needs more than a different model: `ydotool type` can only produce US-layout
+  keycodes, so the typing path in `stop_recording_and_transcribe()` would have
+  to be replaced with a clipboard-and-paste approach first.
 
 ## Contributing
 
