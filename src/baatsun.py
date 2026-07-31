@@ -20,11 +20,14 @@ import time
 
 from evdev import InputDevice, ecodes, list_devices
 
-from baatsun_config import load_config
+from baatsun_config import load_config, resolve_language
 
 config = load_config()
 
-MODEL_SIZE = os.environ.get("BAATSUN_MODEL") or config["model"]
+LANGUAGE = config.get("language", "english")
+_profile_model, WHISPER_LANGUAGE = resolve_language(config)
+
+MODEL_SIZE = os.environ.get("BAATSUN_MODEL") or _profile_model
 COMPUTE_TYPE = os.environ.get("BAATSUN_COMPUTE_TYPE") or config["compute_type"]
 SOCKET_PATH = f"/run/user/{os.getuid()}/baatsun.sock"
 SAMPLE_RATE = "16000"
@@ -194,7 +197,7 @@ def stop_recording_and_transcribe():
             broadcast({"type": "state", "state": "idle", "reason": "too_short"})
             return
 
-        segments, _info = model.transcribe(wav_path, language="en", beam_size=1)
+        segments, _info = model.transcribe(wav_path, language=WHISPER_LANGUAGE, beam_size=1)
         text = "".join(seg.text for seg in segments).strip()
 
         if not text:
@@ -359,7 +362,8 @@ def main():
     load_history()
     log(f"loaded {len(history)} history entries from {HISTORY_PATH}")
 
-    log(f"loading model {MODEL_SIZE} ({COMPUTE_TYPE}, cpu)...")
+    log(f"language {LANGUAGE}, loading model {MODEL_SIZE} ({COMPUTE_TYPE}, cpu)...")
+    log("(first use of a new model downloads it to ~/.cache/huggingface — this can take a while)")
     model = WhisperModel(MODEL_SIZE, device="cpu", compute_type=COMPUTE_TYPE)
     log("model loaded")
 

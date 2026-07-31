@@ -121,19 +121,35 @@ class SettingsWindow(Adw.PreferencesWindow):
     def __init__(self, parent):
         super().__init__(transient_for=parent, modal=True)
         self.set_title("Voice Settings")
-        self.set_default_size(420, 240)
+        self.set_default_size(420, 300)
 
         cfg = baatsun_config.load_config()
 
         page = Adw.PreferencesPage()
         group = Adw.PreferencesGroup(
             title="Recording",
-            description="Applying a change restarts the baatsun daemon (a few seconds while the model reloads).",
+            description=(
+                "Applying a change restarts the baatsun daemon (a few seconds while "
+                "the model reloads). Switching to Hinglish for the first time "
+                "downloads a ~290 MB model, so that restart takes longer."
+            ),
         )
+
+        self.language_row = Adw.ComboRow(title="Language")
+        self.language_row.set_subtitle("Hinglish types Hindi in Roman script")
+        self.language_row.set_model(Gtk.StringList.new(
+            [baatsun_config.LANGUAGE_LABELS[c] for c in baatsun_config.LANGUAGE_CHOICES]
+        ))
+        self.language_row.set_selected(
+            baatsun_config.safe_index(baatsun_config.LANGUAGE_CHOICES, cfg.get("language"))
+        )
+        group.add(self.language_row)
 
         self.hotkey_row = Adw.ComboRow(title="Hotkey")
         self.hotkey_row.set_model(Gtk.StringList.new(baatsun_config.HOTKEY_CHOICES))
-        self.hotkey_row.set_selected(baatsun_config.HOTKEY_CHOICES.index(cfg["hotkey"]))
+        self.hotkey_row.set_selected(
+            baatsun_config.safe_index(baatsun_config.HOTKEY_CHOICES, cfg.get("hotkey"))
+        )
         group.add(self.hotkey_row)
 
         page.add(group)
@@ -149,10 +165,11 @@ class SettingsWindow(Adw.PreferencesWindow):
         self.add(page)
 
     def on_apply(self, *_args):
-        # Merge into the existing config rather than rebuilding it: model and
-        # compute_type are no longer editable here, but a config file (or a
-        # future setting) may still carry them, and they must survive a save.
+        # Merge into the existing config rather than rebuilding it: model,
+        # compute_type and hinglish_model are not editable here, but the config
+        # file may still carry them, and they must survive a save.
         cfg = baatsun_config.load_config()
+        cfg["language"] = baatsun_config.LANGUAGE_CHOICES[self.language_row.get_selected()]
         cfg["hotkey"] = baatsun_config.HOTKEY_CHOICES[self.hotkey_row.get_selected()]
         baatsun_config.save_config(cfg)
         threading.Thread(target=self._restart_daemon, daemon=True).start()
