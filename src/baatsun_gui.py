@@ -76,6 +76,9 @@ class HistoryRow(Gtk.ListBoxRow):
         super().__init__()
         self.entry_id = entry.get("id")
         self.entry_text = entry.get("text", "")
+        # Present only when the cleanup pass actually changed something.
+        self.raw_text = entry.get("raw")
+        self._showing_raw = False
         self.set_activatable(False)
 
         outer = Gtk.Box(
@@ -88,17 +91,27 @@ class HistoryRow(Gtk.ListBoxRow):
         )
 
         text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
-        text_label = Gtk.Label(label=self.entry_text, xalign=0, wrap=True, selectable=True)
-        time_label = Gtk.Label(label=format_time(entry.get("ts")), xalign=0)
-        time_label.add_css_class("caption")
-        time_label.add_css_class("dim-label")
-        text_box.append(text_label)
-        text_box.append(time_label)
+        self.text_label = Gtk.Label(label=self.entry_text, xalign=0, wrap=True, selectable=True)
+        self.time_label = Gtk.Label(label=format_time(entry.get("ts")), xalign=0)
+        self.time_label.add_css_class("caption")
+        self.time_label.add_css_class("dim-label")
+        self._stamp = format_time(entry.get("ts"))
+        text_box.append(self.text_label)
+        text_box.append(self.time_label)
 
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0, valign=Gtk.Align.START)
         copy_btn = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copy")
         copy_btn.add_css_class("flat")
         copy_btn.connect("clicked", self._on_copy)
+        # Only offered where there is a difference to look at, so its presence
+        # is itself the signal that cleanup changed this one.
+        if self.raw_text:
+            self.raw_btn = Gtk.Button(
+                icon_name="view-reveal-symbolic",
+                tooltip_text="Show what you actually said, before cleanup")
+            self.raw_btn.add_css_class("flat")
+            self.raw_btn.connect("clicked", self._on_toggle_raw)
+            actions.append(self.raw_btn)
         retype_btn = Gtk.Button(icon_name="edit-redo-symbolic", tooltip_text="Type again into focused window")
         retype_btn.add_css_class("flat")
         retype_btn.connect("clicked", lambda *_a: on_retype(self.entry_id))
@@ -114,7 +127,19 @@ class HistoryRow(Gtk.ListBoxRow):
         self.set_child(outer)
 
     def _on_copy(self, *_args):
-        self.get_clipboard().set(self.entry_text)
+        """Copy whichever version is on screen, not always the cleaned one."""
+        self.get_clipboard().set(
+            self.raw_text if self._showing_raw else self.entry_text)
+
+    def _on_toggle_raw(self, *_args):
+        self._showing_raw = not self._showing_raw
+        self.text_label.set_label(
+            self.raw_text if self._showing_raw else self.entry_text)
+        self.time_label.set_label(
+            f"{self._stamp}  ·  before cleanup" if self._showing_raw
+            else self._stamp)
+        self.raw_btn.set_icon_name(
+            "view-conceal-symbolic" if self._showing_raw else "view-reveal-symbolic")
 
 
 class SettingsWindow(Adw.PreferencesWindow):
@@ -190,6 +215,16 @@ class SettingsWindow(Adw.PreferencesWindow):
             baatsun_config.CLEANUP_SCOPE_CHOICES, cfg.get("cleanup_scope")))
         group.add(self.scope_row)
 
+        self.strength_row = Adw.ComboRow(
+            title="Correction level",
+            subtitle="Natural also fixes phrasing a native speaker wouldn't use",
+        )
+        self.strength_row.set_model(Gtk.StringList.new(
+            ["Grammar and punctuation only", "Natural English"]))
+        self.strength_row.set_selected(baatsun_config.safe_index(
+            baatsun_config.CLEANUP_STRENGTH_CHOICES, cfg.get("cleanup_strength")))
+        group.add(self.strength_row)
+
         self.breaks_row = Adw.SwitchRow(
             title="Break long text into paragraphs",
             subtitle="Never in chat apps, where Enter would send the message",
@@ -253,6 +288,8 @@ class SettingsWindow(Adw.PreferencesWindow):
             baatsun_config.CLEANUP_SCOPE_CHOICES[self.scope_row.get_selected()]
         cfg["line_breaks"] = self.breaks_row.get_active()
         cfg["hinglish"] = self.hinglish_row.get_active()
+        cfg["cleanup_strength"] = \
+            baatsun_config.CLEANUP_STRENGTH_CHOICES[self.strength_row.get_selected()]
         baatsun_config.save_config(cfg)
         baatsun_config.save_api_key(self.key_row.get_text())
         threading.Thread(target=self._restart_daemon, daemon=True).start()

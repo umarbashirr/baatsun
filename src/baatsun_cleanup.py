@@ -23,28 +23,53 @@ API_URL = "https://api.openai.com/v1/chat/completions"
 # the raw transcript is the better answer than making the user wait.
 TIMEOUT = 6
 
-# A proofreader, not an editor. The distinction is the whole specification: it
-# corrects what is *wrong* — grammar, punctuation, capitalisation — and leaves
-# everything that is merely *plain* exactly as spoken. The earlier version of
-# this prompt asked for well-written prose and got it, by rewriting the
-# speaker's sentences into someone else's; the explicit bans on synonyms,
-# reordering and tightening are what hold that line.
-SYSTEM_PROMPT = (
+# A proofreader, not an editor — at either strength. An early version of this
+# prompt asked for well-written prose and got it, by rewriting the speaker's
+# sentences into someone else's: it merged clauses, swapped "shaped" for
+# "developed", and at one point flipped "I" to "you". The bans on merging,
+# reordering and tightening below are what hold that line, and they are why
+# raising the strength stays safe — it widens which *words* may be corrected,
+# never whether the sentences may be rearranged.
+_PROMPT_HEAD = (
     "You proofread voice dictation. The input is spoken English, transcribed "
     "literally, so it runs on and lacks punctuation.\n"
-    "Fix ONLY what is grammatically wrong: missing or incorrect articles, verb "
+    "Fix what is grammatically wrong: missing or incorrect articles, verb "
     "tense and agreement, prepositions, singular/plural, and missing helper "
     "words. Add correct punctuation and capitalisation, and break run-on speech "
     "into sentences.\n"
     "Remove only disfluencies: um, uh, and abandoned false starts.\n"
+)
+
+# What separates the two levels is not how hard it tries, but which category of
+# change it is allowed to make. "grammar" may only fix what is wrong; "natural"
+# may additionally fix what is unidiomatic. Neither may restructure — that is
+# the clause that keeps the speaker's meaning and shape intact, and it is
+# repeated in both rather than shared, because it is the load-bearing one.
+_PRESERVE_GRAMMAR = (
     "Preserve the speaker's exact wording everywhere else. Do NOT substitute "
     "synonyms. Do NOT reorder or merge clauses. Do NOT tighten, shorten or "
     "restructure. Do NOT add or remove any idea. If a phrase is grammatical but "
     "plain or repetitive, leave it exactly as it is — plainness is not an error "
     "to be corrected.\n"
+)
+_PRESERVE_NATURAL = (
+    "ALSO fix unidiomatic phrasing: where wording is understandable but not how "
+    "a native speaker would put it, replace just that phrase with the natural "
+    "equivalent (for example 'take leverage from AI' becomes 'leverage AI').\n"
+    "Everything else is preserved. Do NOT merge, split, reorder or delete any "
+    "sentence. Do NOT tighten or shorten. Do NOT add or remove any idea. Keep "
+    "the speaker's structure and their points exactly. Change wording only "
+    "where it is wrong or unnatural, never where it is merely plain — do not "
+    "swap a word for a fancier one, and do not reword to avoid repetition.\n"
+)
+_PROMPT_TAIL = (
     "Never change who a sentence is about: if they said 'I', keep 'I'.\n"
     "Return only the corrected text, with no preamble, quotes, or commentary."
 )
+
+GRAMMAR, NATURAL = "grammar", "natural"
+
+SYSTEM_PROMPT = _PROMPT_HEAD + _PRESERVE_GRAMMAR + _PROMPT_TAIL
 
 HINGLISH_LINE = (
     "The speaker is an Indian English speaker who mixes Hindi discourse words "
@@ -75,10 +100,13 @@ LINE_BREAK_LINE = (
 LINE_BREAK_MIN_WORDS = 40
 
 
-def build_system_prompt(vocabulary="", line_breaks=False, hinglish=False):
+def build_system_prompt(vocabulary="", line_breaks=False, hinglish=False,
+                       strength=GRAMMAR):
     # Hinglish guidance goes first: it changes how the input should be *read*,
     # which the proofreading rules below then apply to.
-    prompt = (HINGLISH_LINE if hinglish else "") + SYSTEM_PROMPT
+    preserve = _PRESERVE_NATURAL if strength == NATURAL else _PRESERVE_GRAMMAR
+    prompt = ((HINGLISH_LINE if hinglish else "")
+              + _PROMPT_HEAD + preserve + _PROMPT_TAIL)
     if vocabulary:
         prompt += "\n" + VOCABULARY_LINE.format(vocabulary=vocabulary)
     if line_breaks:
@@ -87,7 +115,7 @@ def build_system_prompt(vocabulary="", line_breaks=False, hinglish=False):
 
 
 def clean(text, api_key, model="gpt-4o-mini", log=None, vocabulary="",
-          line_breaks=False, hinglish=False):
+          line_breaks=False, hinglish=False, strength=GRAMMAR):
     """Return the cleaned transcript, or None if it couldn't be produced.
 
     None is not an error the caller needs to handle beyond falling back to the
@@ -103,6 +131,7 @@ def clean(text, api_key, model="gpt-4o-mini", log=None, vocabulary="",
                 vocabulary,
                 line_breaks and len(text.split()) >= LINE_BREAK_MIN_WORDS,
                 hinglish,
+                strength,
             )},
             {"role": "user", "content": text},
         ],

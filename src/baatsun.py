@@ -112,10 +112,19 @@ def save_history():
     os.replace(tmp_path, HISTORY_PATH)
 
 
-def add_history_entry(text):
+def add_history_entry(text, raw=None):
+    """Record a transcript, keeping the pre-cleanup text when it differed.
+
+    "raw" is omitted when cleanup made no change or didn't run, so the common
+    entry stays the shape it has always been and the file doesn't double in
+    size. When it is present the GUI offers to show it: cleanup rewords things,
+    and you can't audit a rewrite you can't see next to the original.
+    """
     global next_entry_id
     with history_lock:
         entry = {"id": next_entry_id, "text": text, "ts": time.time()}
+        if raw is not None and raw != text:
+            entry["raw"] = raw
         next_entry_id += 1
         history.append(entry)
         del history[:-HISTORY_LIMIT]
@@ -220,6 +229,7 @@ def maybe_clean(text):
         line_breaks=(cfg.get("line_breaks", True)
                      and baatsun_context.allows_line_breaks(app, title)),
         hinglish=bool(cfg.get("hinglish")),
+        strength=cfg.get("cleanup_strength") or "grammar",
     )
     if cleaned is None:
         return text
@@ -271,9 +281,10 @@ def stop_recording_and_transcribe():
             return
 
         log(f"transcript: {text!r}")
+        raw = text
         text = maybe_clean(text)
         subprocess.run(["ydotool", "type", "--", text], check=False)
-        entry = add_history_entry(text)
+        entry = add_history_entry(text, raw)
         broadcast({"type": "transcript", "entry": entry})
         broadcast({"type": "state", "state": "idle"})
     finally:

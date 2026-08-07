@@ -28,6 +28,10 @@ DEFAULT_MODEL = "small.en"
 # the transcript text is sent — never the audio, which stays on this machine.
 DEFAULT_CLEANUP_MODEL = "gpt-4o-mini"
 CLEANUP_SCOPE_CHOICES = ["prose", "all"]
+# "grammar" fixes only what is wrong; "natural" also replaces phrasing that is
+# understandable but not how a native speaker would say it. Neither is allowed
+# to restructure sentences — that is what keeps the meaning yours.
+CLEANUP_STRENGTH_CHOICES = ["grammar", "natural"]
 
 DEFAULT_CONFIG = {
     # Empty means DEFAULT_MODEL, which is what almost everyone wants. Set this
@@ -55,6 +59,7 @@ DEFAULT_CONFIG = {
     # this tells the cleanup pass to recognise and render them. Distinct from
     # the Hinglish *transcription* this project used to ship: the audio is still
     # decoded as English, and the output is still English, not romanized Hindi.
+    "cleanup_strength": "grammar",
     "hinglish": False,
     # Group long dictations into short paragraphs for readability. Only ever
     # applied where Enter starts a new line — never in a chat window, where it
