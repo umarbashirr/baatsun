@@ -46,6 +46,14 @@ SYSTEM_PROMPT = (
     "Return only the corrected text, with no preamble, quotes, or commentary."
 )
 
+HINGLISH_LINE = (
+    "The speaker is an Indian English speaker who mixes Hindi discourse words "
+    "into English while dictating. The transcriber is English-only, so those "
+    "words arrive garbled — 'ki' (that) as 'K', 'hamare'/'humara' (our) as "
+    "'Hummer', and similar. Recognise them and render the sentence in natural "
+    "English. Do not output Hindi or romanized Hindi.\n"
+)
+
 VOCABULARY_LINE = (
     "These names are often misheard by the transcriber; correct them wherever "
     "they appear, however they were spelled: {vocabulary}."
@@ -67,8 +75,10 @@ LINE_BREAK_LINE = (
 LINE_BREAK_MIN_WORDS = 40
 
 
-def build_system_prompt(vocabulary="", line_breaks=False):
-    prompt = SYSTEM_PROMPT
+def build_system_prompt(vocabulary="", line_breaks=False, hinglish=False):
+    # Hinglish guidance goes first: it changes how the input should be *read*,
+    # which the proofreading rules below then apply to.
+    prompt = (HINGLISH_LINE if hinglish else "") + SYSTEM_PROMPT
     if vocabulary:
         prompt += "\n" + VOCABULARY_LINE.format(vocabulary=vocabulary)
     if line_breaks:
@@ -77,7 +87,7 @@ def build_system_prompt(vocabulary="", line_breaks=False):
 
 
 def clean(text, api_key, model="gpt-4o-mini", log=None, vocabulary="",
-          line_breaks=False):
+          line_breaks=False, hinglish=False):
     """Return the cleaned transcript, or None if it couldn't be produced.
 
     None is not an error the caller needs to handle beyond falling back to the
@@ -92,6 +102,7 @@ def clean(text, api_key, model="gpt-4o-mini", log=None, vocabulary="",
             {"role": "system", "content": build_system_prompt(
                 vocabulary,
                 line_breaks and len(text.split()) >= LINE_BREAK_MIN_WORDS,
+                hinglish,
             )},
             {"role": "user", "content": text},
         ],

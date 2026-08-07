@@ -197,6 +197,13 @@ class SettingsWindow(Adw.PreferencesWindow):
         self.breaks_row.set_active(bool(cfg.get("line_breaks", True)))
         group.add(self.breaks_row)
 
+        self.hinglish_row = Adw.SwitchRow(
+            title="I mix Hindi words into my speech",
+            subtitle="Renders garbled Hindi ('K', 'Hummer') as English",
+        )
+        self.hinglish_row.set_active(bool(cfg.get("hinglish")))
+        group.add(self.hinglish_row)
+
         # PasswordEntryRow so the key isn't left on screen; it is stored 0600 in
         # its own file, never in config.json.
         self.key_row = Adw.PasswordEntryRow(title="OpenAI API key")
@@ -245,6 +252,7 @@ class SettingsWindow(Adw.PreferencesWindow):
         cfg["cleanup_scope"] = \
             baatsun_config.CLEANUP_SCOPE_CHOICES[self.scope_row.get_selected()]
         cfg["line_breaks"] = self.breaks_row.get_active()
+        cfg["hinglish"] = self.hinglish_row.get_active()
         baatsun_config.save_config(cfg)
         baatsun_config.save_api_key(self.key_row.get_text())
         threading.Thread(target=self._restart_daemon, daemon=True).start()

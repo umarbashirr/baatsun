@@ -50,6 +50,12 @@ DEFAULT_CONFIG = {
     # Correcting them at the decoder matters more: a proofreader asked to fix
     # "Cloud Code" has to guess it was wrong, and mostly doesn't.
     "vocabulary": "",
+    # The speaker mixes Hindi discourse words into English speech. The model is
+    # English-only, so those arrive garbled ("ki" as "K", "hamare" as "Hummer");
+    # this tells the cleanup pass to recognise and render them. Distinct from
+    # the Hinglish *transcription* this project used to ship: the audio is still
+    # decoded as English, and the output is still English, not romanized Hindi.
+    "hinglish": False,
     # Group long dictations into short paragraphs for readability. Only ever
     # applied where Enter starts a new line — never in a chat window, where it
     # would send the message in pieces.

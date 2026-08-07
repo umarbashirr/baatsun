@@ -48,7 +48,7 @@ PROSE_APPS = CHAT_APPS | {
 
 # Sites where Enter submits rather than newlines, same hazard as CHAT_APPS.
 CHAT_SITES = re.compile(
-    r"slack|discord|web\.whatsapp|messenger|teams\.microsoft|chat\.google",
+    r"slack|discord|whatsapp|messenger|teams|chat",
     re.IGNORECASE,
 )
 
@@ -68,6 +68,10 @@ PROSE_SITES = re.compile(
     # trailing separator so it can't fire on an ordinary word containing an x.
     r"linkedin|(?:^|\W)x\.com|/\s*X(?=\s*[-—|]|\s*$)|\bon X:|"
     r"twitter|mastodon|bluesky|bsky|threads|reddit|"
+    # Chat services reached through a browser are prose and must be cleaned;
+    # CHAT_SITES separately stops them getting line breaks. Leaving them out
+    # of here made WhatsApp Web fall through to "developer" and skip cleanup.
+    r"whatsapp|microsoft teams|teams\.microsoft|google chat|chat\.google|messenger|"
     r"medium|substack|gmail|outlook|slack|discord|notion|docs\.google|"
     r"wordpress|ghost|hashnode|dev\.to",
     re.IGNORECASE,

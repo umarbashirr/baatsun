@@ -219,6 +219,7 @@ def maybe_clean(text):
         vocabulary=cfg.get("vocabulary") or "",
         line_breaks=(cfg.get("line_breaks", True)
                      and baatsun_context.allows_line_breaks(app, title)),
+        hinglish=bool(cfg.get("hinglish")),
     )
     if cleaned is None:
         return text
