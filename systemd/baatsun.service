@@ -7,9 +7,9 @@ ExecStart=%h/projects/baatsun/venv/bin/python3 %h/projects/baatsun/src/baatsun.p
 # Settings come from ~/.config/baatsun/config.json (the hotkey is editable via
 # the Settings panel in baatsun-gui; model_override and compute_type are file
 # only). Uncomment to force a value regardless of that file — an env var always
-# wins. BAATSUN_MODEL replaces the managed model that handles both English and
-# Hinglish, so naming an English-only model here gives up romanized Hindi:
-# Environment=BAATSUN_MODEL=base.en
+# wins. BAATSUN_MODEL takes any faster-whisper model name, a HuggingFace CT2
+# repo id, or a local model directory — smaller ones trade accuracy for speed:
+# Environment=BAATSUN_MODEL=medium.en
 Restart=on-failure
 RestartSec=2
 

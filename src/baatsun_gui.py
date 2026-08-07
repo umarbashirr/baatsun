@@ -129,11 +129,19 @@ class SettingsWindow(Adw.PreferencesWindow):
         group = Adw.PreferencesGroup(
             title="Recording",
             description=(
-                "Dictate in English or Hinglish — one model handles both, so there "
-                "is nothing to switch. Applying a change restarts the baatsun "
-                "daemon (a few seconds while the model reloads)."
+                "Applying a change restarts the baatsun daemon (a few seconds "
+                "while the model reloads)."
             ),
         )
+
+        self.vocab_row = Adw.EntryRow(title="Names to get right")
+        self.vocab_row.set_text(cfg.get("vocabulary") or "")
+        self.vocab_row.set_tooltip_text(
+            "Comma-separated. Your name, your products, the tools you talk "
+            "about — anything the transcriber mishears. Applied while "
+            "transcribing, so it works even with cleanup off."
+        )
+        group.add(self.vocab_row)
 
         self.hotkey_row = Adw.ComboRow(title="Hotkey")
         self.hotkey_row.set_model(Gtk.StringList.new(baatsun_config.HOTKEY_CHOICES))
@@ -143,6 +151,7 @@ class SettingsWindow(Adw.PreferencesWindow):
         group.add(self.hotkey_row)
 
         page.add(group)
+        page.add(self._build_cleanup_group(cfg))
 
         button_group = Adw.PreferencesGroup()
         apply_button = Gtk.Button(label="Apply & Restart Daemon")
@@ -154,13 +163,90 @@ class SettingsWindow(Adw.PreferencesWindow):
 
         self.add(page)
 
+    def _build_cleanup_group(self, cfg):
+        group = Adw.PreferencesGroup(
+            title="Cleanup with OpenAI",
+            description=(
+                "Tidies punctuation, capitalisation and filler words before "
+                "typing. Only the transcribed text is sent — your audio never "
+                "leaves this machine. Costs a fraction of a cent per dictation."
+            ),
+        )
+
+        self.cleanup_row = Adw.SwitchRow(
+            title="Clean up transcripts",
+            subtitle="Off until an API key is saved below",
+        )
+        self.cleanup_row.set_active(bool(cfg.get("cleanup_enabled")))
+        group.add(self.cleanup_row)
+
+        self.scope_row = Adw.ComboRow(
+            title="Apply to",
+            subtitle="Prose only: terminals and editors stay verbatim",
+        )
+        self.scope_row.set_model(Gtk.StringList.new(
+            ["Prose windows only", "Everything I dictate"]))
+        self.scope_row.set_selected(baatsun_config.safe_index(
+            baatsun_config.CLEANUP_SCOPE_CHOICES, cfg.get("cleanup_scope")))
+        group.add(self.scope_row)
+
+        self.breaks_row = Adw.SwitchRow(
+            title="Break long text into paragraphs",
+            subtitle="Never in chat apps, where Enter would send the message",
+        )
+        self.breaks_row.set_active(bool(cfg.get("line_breaks", True)))
+        group.add(self.breaks_row)
+
+        # PasswordEntryRow so the key isn't left on screen; it is stored 0600 in
+        # its own file, never in config.json.
+        self.key_row = Adw.PasswordEntryRow(title="OpenAI API key")
+        self.key_row.set_text(baatsun_config.load_api_key())
+        group.add(self.key_row)
+
+        self.key_status = Adw.ActionRow(title="Test key")
+        test_button = Gtk.Button(label="Test")
+        test_button.set_valign(Gtk.Align.CENTER)
+        test_button.connect("clicked", self.on_test_key)
+        self.key_status.add_suffix(test_button)
+        self.key_status.set_subtitle("Sends one short request to check the key")
+        group.add(self.key_status)
+
+        return group
+
+    def on_test_key(self, button):
+        key = self.key_row.get_text().strip()
+        model = baatsun_config.load_config().get("cleanup_model") \
+            or baatsun_config.DEFAULT_CLEANUP_MODEL
+        button.set_sensitive(False)
+        self.key_status.set_subtitle("Checking…")
+
+        def work():
+            import baatsun_cleanup
+            ok, message = baatsun_cleanup.verify_key(key, model)
+            # Back to the main loop before touching any widget: GTK is not
+            # thread-safe and this runs on a worker.
+            GLib.idle_add(finish, ok, message)
+
+        def finish(ok, message):
+            self.key_status.set_subtitle(("✓ " if ok else "✗ ") + message)
+            button.set_sensitive(True)
+            return GLib.SOURCE_REMOVE
+
+        threading.Thread(target=work, daemon=True).start()
+
     def on_apply(self, *_args):
         # Merge into the existing config rather than rebuilding it:
         # model_override and compute_type are not editable here, but the config
         # file may still carry them, and they must survive a save.
         cfg = baatsun_config.load_config()
         cfg["hotkey"] = baatsun_config.HOTKEY_CHOICES[self.hotkey_row.get_selected()]
+        cfg["vocabulary"] = self.vocab_row.get_text().strip()
+        cfg["cleanup_enabled"] = self.cleanup_row.get_active()
+        cfg["cleanup_scope"] = \
+            baatsun_config.CLEANUP_SCOPE_CHOICES[self.scope_row.get_selected()]
+        cfg["line_breaks"] = self.breaks_row.get_active()
         baatsun_config.save_config(cfg)
+        baatsun_config.save_api_key(self.key_row.get_text())
         threading.Thread(target=self._restart_daemon, daemon=True).start()
         self.close()
 

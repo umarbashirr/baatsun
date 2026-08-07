@@ -20,13 +20,18 @@ import time
 
 from evdev import InputDevice, ecodes, list_devices
 
-import baatsun_models
-from baatsun_config import CONFIG_PATH, WHISPER_LANGUAGE, load_config, resolve_model
+import baatsun_cleanup
+import baatsun_context
+from baatsun_config import (
+    CONFIG_PATH,
+    WHISPER_LANGUAGE,
+    load_api_key,
+    load_config,
+    resolve_model,
+)
 
 config = load_config()
 
-# None here means the managed model, resolved in main() because it may need
-# downloading and that shouldn't happen at import time.
 MODEL_SIZE = os.environ.get("BAATSUN_MODEL") or resolve_model(config)
 COMPUTE_TYPE = os.environ.get("BAATSUN_COMPUTE_TYPE") or config["compute_type"]
 SOCKET_PATH = f"/run/user/{os.getuid()}/baatsun.sock"
@@ -65,6 +70,14 @@ hotkey_state = {
     "pressed": set(),   # keycodes currently held, across all keyboards
     "held": False,      # whether the ctrl+meta combo is currently active
 }
+
+# Last window the GNOME Shell extension told us had focus, used to decide
+# whether a transcript is prose worth cleaning up or a coding prompt that must
+# be typed verbatim. Stays empty on desktops without the extension, which
+# baatsun_context reads as "developer" — the safe direction. Guarded by its own
+# lock: it is written from socket threads and read mid-transcription.
+focus_lock = threading.Lock()
+focus = {"app": "", "title": ""}
 
 # Transcript history, newest-last, persisted to HISTORY_PATH. Guarded by
 # history_lock, which is separate from state_lock so broadcasting to GUI
@@ -172,6 +185,48 @@ def start_recording():
     log(f"recording started -> {wav_path}")
 
 
+def maybe_clean(text):
+    """Return text polished by OpenAI, or the original if that doesn't apply.
+
+    Config is re-read per dictation rather than cached at startup so toggling
+    cleanup in Settings takes effect immediately — the Settings panel restarts
+    the daemon for the hotkey's sake, but this shouldn't depend on that.
+    """
+    cfg = load_config()
+    if not cfg.get("cleanup_enabled"):
+        return text
+
+    api_key = load_api_key()
+    if not api_key:
+        log("cleanup is on but no API key is set — typing the raw transcript")
+        return text
+
+    with focus_lock:
+        app, title = focus["app"], focus["title"]
+
+    if not baatsun_context.should_clean(cfg, app, title):
+        log(f"context {baatsun_context.classify(app, title)} ({app or 'unknown'}) "
+            "— typing the raw transcript")
+        return text
+
+    # Deliberately no new state here: the pill, tray and GUI all treat an
+    # unrecognised state as idle, so announcing "cleaning" would drop the pill
+    # to rest and re-enable the record button while the request is still in
+    # flight. Staying "transcribing" keeps the sweep running, which is what a
+    # user waiting on text actually needs to see.
+    cleaned = baatsun_cleanup.clean(
+        text, api_key, cfg.get("cleanup_model") or "gpt-4o-mini", log=log,
+        vocabulary=cfg.get("vocabulary") or "",
+        line_breaks=(cfg.get("line_breaks", True)
+                     and baatsun_context.allows_line_breaks(app, title)),
+    )
+    if cleaned is None:
+        return text
+    if cleaned != text:
+        log(f"cleaned: {cleaned!r}")
+    return cleaned
+
+
 def stop_recording_and_transcribe():
     proc = state["proc"]
     wav_path = state["wav_path"]
@@ -197,7 +252,16 @@ def stop_recording_and_transcribe():
             broadcast({"type": "state", "state": "idle", "reason": "too_short"})
             return
 
-        segments, _info = model.transcribe(wav_path, language=WHISPER_LANGUAGE, beam_size=1)
+        # initial_prompt biases the decoder toward names it would otherwise
+        # mangle ("Claude" heard as "cloud"). Cheaper and far more reliable
+        # than asking the cleanup model to spot the mistake afterwards, and it
+        # works even with cleanup switched off.
+        segments, _info = model.transcribe(
+            wav_path,
+            language=WHISPER_LANGUAGE,
+            beam_size=1,
+            initial_prompt=load_config().get("vocabulary") or None,
+        )
         text = "".join(seg.text for seg in segments).strip()
 
         if not text:
@@ -206,6 +270,7 @@ def stop_recording_and_transcribe():
             return
 
         log(f"transcript: {text!r}")
+        text = maybe_clean(text)
         subprocess.run(["ydotool", "type", "--", text], check=False)
         entry = add_history_entry(text)
         broadcast({"type": "transcript", "entry": entry})
@@ -315,7 +380,9 @@ def start_hotkey_listener():
 
 class Handler(socketserver.BaseRequestHandler):
     def handle(self):
-        data = self.request.recv(256).decode().strip()
+        # Generous because "focus" carries a window title, which can be long;
+        # every other command is a word and an integer.
+        data = self.request.recv(8192).decode("utf-8", "replace").strip()
         command, _, arg = data.partition(" ")
         if command == "toggle":
             result = handle_toggle()
@@ -334,10 +401,44 @@ class Handler(socketserver.BaseRequestHandler):
             self.handle_delete(arg)
         elif command == "retype":
             self.handle_retype(arg)
+        elif command == "focus":
+            self.handle_focus(arg)
         elif command == "subscribe":
             self.handle_subscribe()
         else:
             self.request.sendall(b"unknown command")
+
+    def handle_focus(self, arg):
+        """Record which window has focus, reported by the GNOME extension.
+
+        Malformed input is dropped rather than raised on: this arrives from
+        another process on every window switch, and a bad line should never
+        take down the thread that also serves the hotkey.
+        """
+        try:
+            payload = json.loads(arg)
+            app = str(payload.get("app") or "")
+            title = str(payload.get("title") or "")
+        except (ValueError, AttributeError):
+            self._reply(b"bad_focus")
+            return
+        with focus_lock:
+            focus["app"] = app
+            focus["title"] = title
+        self._reply(b"ok")
+
+    def _reply(self, payload):
+        """Answer a fire-and-forget notification, tolerating a gone client.
+
+        The GNOME extension writes "focus ..." and closes without waiting for
+        an answer — correct for a notification, but it means our reply races
+        the close and usually loses. Without this guard every window switch
+        logs a BrokenPipeError traceback from socketserver.
+        """
+        try:
+            self.request.sendall(payload)
+        except OSError:
+            pass
 
     def handle_delete(self, arg):
         try:
@@ -396,23 +497,19 @@ def main():
     load_history()
     log(f"loaded {len(history)} history entries from {HISTORY_PATH}")
 
-    model_spec = MODEL_SIZE
-    if model_spec is None:
-        try:
-            model_spec = baatsun_models.ensure_model(log)
-        except Exception as exc:
-            # There is no second model to fall back to any more, and starting
-            # without one would leave a daemon whose hotkey does nothing. Exit
-            # instead: systemd retries (and gives up after its start limit),
-            # and the reason is in the journal either way.
-            log(f"could not fetch the dictation model: {exc}")
-            log("dictation can't run without it — check your network and "
-                f"restart, or point 'model_override' in {CONFIG_PATH} at a "
-                "local model")
-            raise SystemExit(1)
-
-    log(f"loading model {model_spec} ({COMPUTE_TYPE}, cpu)...")
-    model = WhisperModel(model_spec, device="cpu", compute_type=COMPUTE_TYPE)
+    # faster-whisper fetches the model into ~/.cache/huggingface on first use;
+    # after that this is a local load.
+    log(f"loading model {MODEL_SIZE} ({COMPUTE_TYPE}, cpu)...")
+    try:
+        model = WhisperModel(MODEL_SIZE, device="cpu", compute_type=COMPUTE_TYPE)
+    except Exception as exc:
+        # Starting anyway would leave a daemon whose hotkey silently does
+        # nothing. Exit instead, with the reason on one readable line above
+        # the traceback; systemd retries and gives up at its start limit.
+        log(f"could not load the dictation model {MODEL_SIZE}: {exc}")
+        log("dictation can't run without it — check your network and restart, "
+            f"or point 'model_override' in {CONFIG_PATH} at a local model")
+        raise
     log("model loaded")
 
     start_hotkey_listener()

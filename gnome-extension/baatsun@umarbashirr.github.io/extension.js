@@ -76,11 +76,26 @@ export default class BaatsunPillExtension extends Extension {
 
         this._applyState('offline');
         this._connect();
+
+        // Report which window has focus, so the daemon can tell a coding
+        // prompt from a LinkedIn post. Only the Shell can see this on Wayland.
+        this._focusId = global.display.connect(
+            'notify::focus-window', () => this._reportFocus());
+        this._reportFocus();
     }
 
     disable() {
         this._stopAnimations();
 
+        if (this._focusId) {
+            global.display.disconnect(this._focusId);
+            this._focusId = null;
+        }
+        if (this._titleId) {
+            this._titledWindow?.disconnect(this._titleId);
+            this._titleId = null;
+            this._titledWindow = null;
+        }
         if (this._monitorsChangedId) {
             Main.layoutManager.disconnect(this._monitorsChangedId);
             this._monitorsChangedId = null;
@@ -230,6 +245,52 @@ export default class BaatsunPillExtension extends Extension {
             this._sweep.hide();
             this._sweep.translation_x = -SWEEP_WIDTH;
         }
+    }
+
+    /* ---------------------------------------------------------------- focus */
+
+    /* A browser's window class never changes but its title does, and the title
+     * is what says "LinkedIn" rather than "GitHub". So follow the focused
+     * window's title as well as focus itself, re-hooking on each change. */
+    _reportFocus() {
+        if (this._titleId) {
+            this._titledWindow?.disconnect(this._titleId);
+            this._titleId = null;
+            this._titledWindow = null;
+        }
+
+        const win = global.display.focus_window;
+        if (win) {
+            this._titledWindow = win;
+            this._titleId = win.connect('notify::title', () => this._sendFocus());
+        }
+        this._sendFocus();
+    }
+
+    _sendFocus() {
+        const win = global.display.focus_window;
+        const payload = JSON.stringify({
+            app: win?.get_wm_class() ?? '',
+            title: win?.get_title() ?? '',
+        });
+
+        /* A short-lived connection per focus change rather than reusing the
+         * subscribe stream: that one is held open for the daemon to push down,
+         * and the daemon's handler reads exactly one command per connection. */
+        const client = new Gio.SocketClient();
+        client.connect_async(
+            Gio.UnixSocketAddress.new(this._socketPath), null,
+            (source, result) => {
+                let connection;
+                try {
+                    connection = client.connect_finish(result);
+                    connection.get_output_stream().write_all(`focus ${payload}`, null);
+                    connection.close(null);
+                } catch (e) {
+                    // The daemon being down is normal and self-correcting; the
+                    // next focus change reports again. Nothing to recover.
+                }
+            });
     }
 
     /* --------------------------------------------------------------- socket */

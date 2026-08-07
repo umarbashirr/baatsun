@@ -5,16 +5,17 @@
 A voice dictation tool for Linux: **hold Ctrl+Super (Windows key) anywhere**,
 speak, **release** — it transcribes locally (faster-whisper, CPU) and types
 the text into whatever window or input box is focused (via `ydotool`). True
-push-to-talk, not toggle. Runs fully offline; nothing you say ever leaves
-your machine.
+push-to-talk, not toggle. Transcription runs fully offline; nothing you say
+ever leaves your machine unless you opt in to the OpenAI cleanup pass, which
+sends the transcript text only.
 
 ## Features
 
 - **Push-to-talk, not toggle** — hold the hotkey, speak, release. No mode to
   forget you're in.
-- **Fully offline** — transcription runs locally on CPU via
-  [faster-whisper](https://github.com/SYSTRAN/faster-whisper). No audio or
-  text is sent anywhere.
+- **Offline transcription** — runs locally on CPU via
+  [faster-whisper](https://github.com/SYSTRAN/faster-whisper). Your audio is
+  never sent anywhere, and by default neither is the text.
 - **Works anywhere** — types directly into whatever window has focus, so it
   works in any app, not just ones with dictation support built in.
 - **No shortcut registration needed** — reads the keyboard directly below the
@@ -25,11 +26,12 @@ your machine.
   while transcribing.
 - **Tray icon + history window** — see live recording state at a glance, and
   browse/search/copy/retype past transcripts.
-- **English and Hinglish, one model** — dictate in English, in Hinglish (Hindi
-  and English mixed together), or both in the same sentence. Nothing to switch:
-  Hindi comes out in Roman script, "mujhe ek coffee chahiye".
-- **Runs on modest hardware** — one whisper-base-sized model, int8 on CPU, no
-  GPU expected.
+- **Accurate English** — whisper `small.en`, int8 on CPU: the smallest model
+  that gets every word right and punctuates properly, at ~1.6s per dictation.
+- **Optional cleanup pass** — tidies punctuation and filler words via OpenAI
+  `gpt-4o-mini`, but only when the focused window is prose (LinkedIn, X, Slack).
+  Terminals and editors are always typed verbatim. Your audio never leaves the
+  machine; only the transcript text is sent, and only if you enable it.
 - **Configurable** — hotkey combo is adjustable from the Settings panel; the
   model and compute type are tunable via config file or env var.
 
@@ -78,35 +80,44 @@ src/baatsun.py (background daemon, systemd --user service)
         delete <id> — remove a single transcript by id
         retype <id> — ydotool-type a past transcript into the focused
                      window again
+        focus <json> — record which window has focus ({app, title}), sent by
+                     the GNOME extension on every focus/title change; decides
+                     whether a transcript is cleaned up or typed verbatim
 
 src/baatsun_config.py (stdlib only — shared by both Python interpreters below)
    Reads/writes ~/.config/baatsun/config.json: model override, compute type,
    hotkey combo. baatsun.py reads it at startup (env vars still override, for
    anyone pinning values in systemd/baatsun.service); baatsun_gui.py's Settings
    panel writes the hotkey and restarts the daemon to apply, preserving the
-   model/compute-type keys it doesn't expose. resolve_model() returns None when
-   the managed model should be used, keeping this module free of download logic
-   so the GUI's system Python can import it too. load_config() drops keys that
-   aren't in DEFAULT_CONFIG, which is what retires the pre-single-model
-   `language`/`hinglish_model`/`model` keys on upgrade instead of letting an
-   old `"model": "base.en"` quietly pin the daemon to English.
+   model/compute-type keys it doesn't expose. resolve_model() returns the
+   override if one is set and DEFAULT_MODEL otherwise; either way it's a name
+   faster-whisper resolves and downloads itself, so this module stays
+   stdlib-only and the GUI's system Python can import it too. load_config()
+   drops keys that aren't in DEFAULT_CONFIG, which is what retires the
+   `language`/`hinglish_model`/`model` keys from the versions that had a
+   Hinglish mode, instead of letting an old one quietly pin the model.
 
-src/baatsun_models.py (stdlib only)
-   Fetches the one model on first use. A stock faster-whisper name would
-   download itself, but no stock model romanizes Hindi and this one exists only
-   as a conversion we publish — so ensure_model() downloads the tarball from
-   this repo's models-v1 release, checks it against a pinned sha256, extracts
-   via a staging directory (so an interrupted run can't leave a half-model that
-   looks valid), and hands baatsun.py a local path. Cached under
-   ~/.cache/baatsun/models/.
+src/baatsun_context.py (stdlib only)
+   Maps the focused window (class + title, reported by the GNOME extension) to
+   "developer" or "prose", deciding whether a transcript gets the cleanup pass.
+   Defaults to "developer" for anything unrecognised — cleaning a post that
+   didn't need it costs a re-read, but rewriting a coding prompt destroys the
+   specifics that made it work, so the safe direction is verbatim.
+
+src/baatsun_cleanup.py (stdlib only — urllib, no new venv dependency)
+   The optional OpenAI polish pass over a transcript. Takes a string, never a
+   wav: the audio stays on this machine by construction. Every failure path
+   returns None and the daemon types the raw transcript, so a dead network can
+   never cost you a dictation.
 
 src/baatsun_gui.py (GTK4 + libadwaita, system Python — needs PyGObject)
    The full app window: record/stop button, live state in the header
    ("Listening…"/"Transcribing…"), a search box that filters history live,
    and per-transcript copy/retype/delete actions. Fetches `history` on
    connect, then stays subscribed for live updates. A gear icon opens
-   Settings (hotkey — writes baatsun_config and runs
-   `systemctl --user restart baatsun.service`). Closing the window hides
+   Settings (hotkey, cleanup toggle/scope, and the OpenAI API key — writes
+   baatsun_config and runs `systemctl --user restart baatsun.service`; the key
+   goes to its own 0600 file, not config.json). Closing the window hides
    it rather than quitting, so the tray icon can re-present it instantly.
 
 src/baatsun_tray.py (GTK3 + AppIndicator, separate process, system Python)
@@ -133,7 +144,10 @@ gnome-extension/baatsun@umarbashirr.github.io/ (GJS, runs inside GNOME Shell)
    sit above every window (including fullscreen ones) and stay
    focus-transparent on GNOME/Wayland. Reads the same unix socket directly
    via GJS's Gio bindings; no extra IPC. bin/baatsun-pill enables this
-   extension on GNOME instead of launching baatsun_pill.py.
+   extension on GNOME instead of launching baatsun_pill.py. It also reports the
+   focused window's class and title to the daemon on every focus (and title)
+   change — on Wayland the Shell is the only thing that can see this, and it's
+   what lets baatsun_context tell a coding prompt from a LinkedIn post.
 ```
 
 Transcript history is persisted to `~/.local/share/baatsun/history.json` and
@@ -250,10 +264,10 @@ systemctl --user status baatsun.service
 journalctl --user -u baatsun.service -f
 ```
 
-The first startup downloads the dictation model (~62 MB, cached under
-`~/.cache/baatsun/models/` afterwards) and the hotkey won't respond until that
-lands — watch the log for download progress, then `model loaded`. Later starts
-take a couple of seconds.
+The first startup downloads the dictation model (~250 MB, cached under
+`~/.cache/huggingface` afterwards) and the hotkey won't respond until that
+lands — watch the log for `model loaded`. Later starts take a couple of
+seconds.
 
 No keyboard shortcut needs to be registered anywhere — the daemon watches
 the keyboard directly.
@@ -374,8 +388,7 @@ Inside the window:
 - Each transcript row has copy / retype (re-runs `ydotool type` into
   whatever's currently focused) / delete buttons.
 - The gear icon opens **Settings** — the hotkey combo (Ctrl+Super / Ctrl+Alt /
-  Alt+Super / Ctrl+Shift). There's no language setting: one model handles
-  English and Hinglish. Applying restarts the daemon
+  Alt+Super / Ctrl+Shift). Applying restarts the daemon
   (`systemctl --user restart baatsun.service`) to pick it up, which takes a
   few seconds while the model reloads.
 
@@ -398,34 +411,32 @@ untouched.
 
 ### The model
 
-There's one model, and it handles English and Hinglish together — there is no
-language setting to get wrong, and no second download. **Hinglish** here means
-Hindi and English mixed in one sentence, the way it's actually spoken: "mujhe
-ek coffee chahiye", "meeting kal schedule kar do".
+Baatsun dictates English with whisper `small.en`, picked by measuring the
+alternatives on this machine rather than by reaching for the biggest one.
+Whisper's encoder always runs on a padded 30-second window, so latency is set
+by model size and lands on *every* dictation however short it was:
 
-Hindi comes out in **Roman script, not Devanagari**: you get `mujhe ek coffee
-chahiye`, not `मुझे एक कॉफ़ी चाहिए`. That's deliberate — `ydotool` types by
-mapping characters to US-layout keycodes, and Devanagari has no keycodes to map
-to, so it would be silently dropped.
+| model | latency | on a clean 11s test clip |
+|---|---|---|
+| Hinglish-Swift (the old default) | 0.67s | substitutes a word, no punctuation |
+| `base.en` | 0.75s | substitutes two words |
+| **`small.en`** | **1.64s** | **every word right, punctuated** |
+| `distil-small.en` | 1.51s | dropped an entire clause — avoid |
+| `distil-medium.en` | 3.94s | correct |
+| `distil-large-v3.5` | 5.12s | exact, best punctuation |
 
-The model is a CTranslate2 build of
-[`Oriserve/Whisper-Hindi2Hinglish-Swift`](https://huggingface.co/Oriserve/Whisper-Hindi2Hinglish-Swift)
-(Apache-2.0), fine-tuned to emit romanized Hinglish. It's whisper-base sized and
-runs int8 on CPU, which is what keeps it usable on low-end machines. Being a
-Hindi-dominant fine-tune, pure-English accuracy is a little below a dedicated
-`base.en` — the tradeoff for never having to switch models mid-thought.
+`small.en` is the first rung that gets the words right, and going further up
+costs 3-6x the latency for a marginal gain. `distil-large-v3.5` is the sensible
+`model_override` if you want the best available and don't mind the wait.
 
-On first use the daemon downloads it (~62 MB) from this repo's
-[`models-v1`](https://github.com/umarbashirr/baatsun/releases/tag/models-v1)
-release into `~/.cache/baatsun/models/`, verifying it against a pinned sha256.
-The hotkey won't respond until it finishes — watch
-`journalctl --user -u baatsun.service -f` for progress. If the download fails
-the daemon logs why and exits rather than starting up unable to transcribe;
-systemd retries it.
+faster-whisper knows the name and downloads it on first use (~250 MB) into
+`~/.cache/huggingface`. The hotkey won't respond until that lands — watch
+`journalctl --user -u baatsun.service -f`, which prints `model loaded` when the
+daemon is ready. Later starts load from that cache in about a second.
 
-Whisper is decoded with the `en` language token for both languages. For
-Hinglish that isn't a compromise — the fine-tune was trained against `<|en|>`,
-and that's precisely what makes it produce Latin script.
+Whisper is decoded with the language pinned to `en` rather than auto-detected,
+which skips a detection pass on every recording and stops a mumbled first word
+from sending the decode off into another language.
 
 ### Model override and compute type — config file or env var
 
@@ -433,12 +444,10 @@ Neither is exposed in the Settings panel; the defaults suit most machines, and
 the wrong compute type mostly just makes transcription slower. Change them if
 you need to:
 
-- **model_override** — empty by default, meaning "use the managed model above".
-  Set it to a faster-whisper model name (`base.en`, `small`…), a HuggingFace CT2
-  repo id, or a local directory to run something else. If you have the CPU
-  headroom and want better accuracy on both languages, point this at a CT2
-  conversion of Oriserve's larger `Apex` or `Prime` models; note that anything
-  not Hinglish-tuned gives up the romanized-Hindi behaviour.
+- **model_override** — empty by default, meaning `small.en` above. Set it to
+  another faster-whisper model name, a HuggingFace CT2 repo id, or a local
+  directory. `distil-large-v3.5` (~1.4 GB) is the step up; `base.en` (~150 MB)
+  the step down. See the latency table above before choosing.
 - **compute_type** — `int8` (default, fastest on CPU) / `int8_float16` /
   `float16` / `float32`.
 
@@ -449,19 +458,72 @@ editing `systemd/baatsun.service` before step 3 if you built from source, or
 with `systemctl --user edit baatsun.service` (adds a drop-in override, so it
 survives package upgrades) if you used the `.deb`.
 
-A `model_override` naming a stock faster-whisper model downloads it on the next
-daemon start (~150 MB for `base.en`, more for larger sizes), cached under
-`~/.cache/huggingface`.
+Whichever model you name, faster-whisper downloads it on the next daemon start
+and caches it under `~/.cache/huggingface`.
 
 Upgrading from a version that had the English/Hinglish switch: the old
 `language`, `model` and `hinglish_model` keys in your config are ignored and
-dropped the next time settings are saved. Nothing to do by hand.
+dropped the next time settings are saved. Nothing to do by hand. The retired
+Hinglish model in `~/.cache/baatsun/models/` is no longer used and can be
+deleted.
+
+### Cleanup with OpenAI — Settings panel
+
+Off by default. When enabled, a transcript is passed through OpenAI
+`gpt-4o-mini` before being typed, to fix punctuation, capitalisation and filler
+words ("um", "you know") and to break run-on speech into sentences. It's told to
+preserve your wording and to leave technical terms, identifiers and file paths
+exactly as dictated.
+
+**Only the transcript text is sent. The audio never leaves your machine** —
+that's the point of transcribing locally and only polishing remotely.
+
+Enable it in the gear icon → **Cleanup with OpenAI**:
+
+- **Clean up transcripts** — the on/off switch.
+- **Apply to** — *Prose windows only* (default) or *Everything I dictate*.
+- **OpenAI API key** — stored in `~/.config/baatsun/openai.key` mode 0600, never
+  in `config.json`. `OPENAI_API_KEY` in the environment takes precedence if set.
+- **Test** — round-trips one short request and reports whether the key works.
+
+#### How "prose windows only" decides
+
+The bundled GNOME Shell extension reports the focused window's class and title
+to the daemon (on Wayland nothing outside the Shell can see this), and
+`src/baatsun_context.py` maps it to `developer` or `prose`:
+
+| focused window | verdict |
+|---|---|
+| terminals, VS Code, JetBrains IDEs, editors | developer — typed verbatim |
+| browser on LinkedIn / X / Reddit / Gmail | prose — cleaned |
+| browser on GitHub / localhost / Jira / CI | developer — typed verbatim |
+| Slack, Discord, Telegram, mail clients | prose — cleaned |
+| **anything unrecognised, or no extension** | **developer — typed verbatim** |
+
+That default is deliberately asymmetric. Cleaning a post that didn't need it
+costs you a re-read; "cleaning" a coding prompt rewrites the specifics that made
+it work. So an unknown window, a missing focus report, or a non-GNOME desktop
+all fall through to typing exactly what you said.
+
+Every failure path — no key, bad key, network down, timeout, implausible
+response — types the raw transcript instead. A dictation is never lost to a
+failed API call.
+
+#### Cost
+
+Cleanup is billed per token, and dictation is short, so this is cheap: roughly
+**$0.03/month** at 2 minutes of speech a day, **~$1.50/month** at four hours a
+day. Transcription itself is free — it runs on your CPU.
 
 ## Privacy
 
-Baatsun runs entirely offline — audio never leaves your machine, and nothing
-is logged beyond the transcript history you can see and clear yourself in
-the app window.
+Baatsun runs entirely offline by default — audio never leaves your machine, and
+nothing is logged beyond the transcript history you can see and clear yourself
+in the app window.
+
+The one exception is opt-in and off unless you turn it on: enabling **Cleanup
+with OpenAI** sends the *transcript text* (never the audio) to OpenAI for the
+windows classified as prose. Leave it off to keep the tool fully offline.
 
 One thing worth being explicit about: reading raw evdev means the daemon
 sees every keystroke typed anywhere on your system, not just the hotkey. It
@@ -492,23 +554,19 @@ before trusting it with anything sensitive.
   not being installed (see step 4 above). On a plain X11 session or a
   Wayland compositor without `wlr-layer-shell`, the pill isn't available at
   all — use the tray icon instead.
-- **Transcription is slow or inaccurate** — try a different `model_override`/
-  `compute_type` combination (see [Configuration](#configuration)); smaller
-  models are faster but less accurate, larger models are the reverse.
-- **Nothing happens on a fresh install** — the first run downloads the ~62 MB
+- **Transcription is slower than you'd like** — set `model_override` to
+  `base.en` (see [Configuration](#configuration)); it's about 2x quicker than
+  `small.en` but does substitute words.
+- **Nothing happens on a fresh install** — the first run downloads the ~250 MB
   model and the hotkey stays unresponsive until it lands. Check
-  `journalctl --user -u baatsun.service -f`; you should see download progress,
-  then `model loaded`.
-- **Daemon won't start, log says it couldn't fetch the model** — it exits
-  rather than run without one, and systemd retries a few times before giving
-  up. Fix the network and `systemctl --user restart baatsun.service`. If a
-  previous attempt left something broken behind, delete
-  `~/.cache/baatsun/models/` to retry from scratch. To run fully offline, set
-  `model_override` to a local model directory.
-- **Pure English is a bit less accurate than you'd like** — the single model is
-  a Hindi-dominant fine-tune, so this is the known cost of not having a
-  language switch. If you dictate almost only English, set
-  `model_override` to `base.en`; you'll lose romanized Hindi.
+  `journalctl --user -u baatsun.service -f`; you should see `model loaded` once
+  it's ready.
+- **Daemon won't start, log says it couldn't download the model** — fix the
+  network and `systemctl --user restart baatsun.service`. If a previous attempt
+  left a partial download behind, delete
+  `~/.cache/huggingface/hub/models--Systran--faster-whisper-small.en` to
+  retry from scratch. To run fully offline, set `model_override` to a local
+  model directory.
 
 ## Roadmap / known limitations
 
@@ -520,10 +578,13 @@ before trusting it with anything sensitive.
   (`baatsun_config.HOTKEY_CHOICES`) rather than an arbitrary key — capturing
   an arbitrary combo would need a "press your new hotkey" UI flow in
   `baatsun_gui.py` that doesn't exist yet.
-- One model covers English and Hinglish, which costs some pure-English
-  accuracy versus a dedicated `base.en`. Recovering both would mean holding two
-  models in memory and routing per recording, which is more RAM than the
-  low-end machines this targets have to spare.
+- English only. The default model is an English-only distillation and there's no
+  language setting; another language means pointing `model_override` at a
+  multilingual model and changing `WHISPER_LANGUAGE` in
+  `src/baatsun_config.py`.
+- Accuracy is bought with CPU. `small.en` is ~2.4x slower per dictation than
+  the whisper-base-sized model this used to ship — `model_override` is the way
+  back down if that matters more than word accuracy.
 - Any language that writes in a non-Latin script (Hindi in Devanagari, say)
   needs more than a different model: `ydotool type` can only produce US-layout
   keycodes, so the typing path in `stop_recording_and_transcribe()` would have
