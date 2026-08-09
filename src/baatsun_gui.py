@@ -263,22 +263,32 @@ def greeting_for(hour, name):
     return f"{part}, {name}" if name else part
 
 
-def user_first_name():
-    """A name to greet by.
+def greeting_name(cfg=None):
+    """A name to greet by, in order of how likely it is to be the real one.
 
-    Prefers the GECOS real name, which is what GNOME Settings writes and where
-    "Umar Bashir" would live. Plenty of systems never set it and leave the
-    login name there instead, in which case the login name is the only name
-    this machine knows the user by -- capitalised, since it is about to be
-    used in a sentence. get_real_name() answers the literal string "Unknown"
-    when it has nothing at all, which is not a name to greet anyone by.
+    1. What the user typed in Settings. Used exactly as written -- if someone
+       has gone to the trouble of typing their name, shortening it is not an
+       improvement.
+    2. The GECOS real name, which is what GNOME Settings > Users writes.
+    3. The login name, capitalised.
+
+    2 and 3 are trimmed to a first word, because GECOS is conventionally
+    "Umar Bashir Rather,,," and "Good morning, Umar Bashir Rather,,," is not a
+    greeting. get_real_name() answers the literal string "Unknown" when it has
+    nothing, and on many machines answers the login name, which is a handle
+    rather than a name -- hence the field in Settings.
     """
-    real = (GLib.get_real_name() or "").strip()
-    if not real or real.lower() == "unknown":
-        real = (GLib.get_user_name() or "").strip()
-    if not real or real.lower() == "unknown":
+    chosen = ((cfg or baatsun_config.load_config()).get("display_name")
+              or "").strip()
+    if chosen:
+        return chosen
+
+    derived = (GLib.get_real_name() or "").strip()
+    if not derived or derived.lower() == "unknown":
+        derived = (GLib.get_user_name() or "").strip()
+    if not derived or derived.lower() == "unknown":
         return ""
-    first = real.split()[0].rstrip(",")
+    first = derived.split()[0].rstrip(",")
     return first[:1].upper() + first[1:] if first.islower() else first
 
 
@@ -621,7 +631,7 @@ class HomePage(Adw.Bin):
 
     def refresh_greeting(self, stats):
         self.greeting.set_label(
-            greeting_for(datetime.now().hour, user_first_name()))
+            greeting_for(datetime.now().hour, greeting_name()))
         if not stats["total"]:
             self.subgreeting.set_label(
                 "Nothing dictated yet. Hold the hotkey and say something.")
@@ -1166,6 +1176,7 @@ class SettingsPage(Adw.Bin):
                               cfg.get("model_override") or "")
 
         page = Adw.PreferencesPage()
+        page.add(self._profile_group(cfg))
 
         recording = Adw.PreferencesGroup(title="Recording")
         self.hotkey_row = Adw.ComboRow(title="Hotkey")
@@ -1194,6 +1205,24 @@ class SettingsPage(Adw.Bin):
         page.add(self._transcription_group(cfg))
         page.add(self._daemon_group())
         self.set_child(page)
+
+    def _profile_group(self, cfg):
+        """First on the page on purpose. The greeting is the first thing the
+        app says, and being greeted by your machine's login name is the first
+        thing anyone wants to change."""
+        group = Adw.PreferencesGroup(
+            title="You",
+            description="Only used to greet you on Home. Never sent anywhere.")
+        self.name_row = Adw.EntryRow(title="Your name")
+        self.name_row.set_text(cfg.get("display_name") or "")
+        # The placeholder shows what the greeting falls back to, so leaving it
+        # empty is an informed choice rather than a blank box.
+        fallback = greeting_name({"display_name": ""})
+        self.name_row.set_tooltip_text(
+            f"Leave empty to use what the system knows"
+            + (f" ({fallback})" if fallback else ""))
+        group.add(self.name_row)
+        return group
 
     def _cleanup_group(self, cfg):
         group = Adw.PreferencesGroup(
@@ -1322,6 +1351,10 @@ class SettingsPage(Adw.Bin):
         # Merge into the existing config rather than rebuilding it: keys this
         # page doesn't show must survive a save.
         cfg = baatsun_config.load_config()
+        # Kept to tell a name-only save apart from one that changes how
+        # dictation behaves -- they deserve different confirmations.
+        before = dict(cfg)
+        cfg["display_name"] = self.name_row.get_text().strip()
         cfg["hotkey"] = baatsun_config.HOTKEY_CHOICES[
             self.hotkey_row.get_selected()]
         cfg["activation"] = baatsun_config.ACTIVATION_CHOICES[
@@ -1351,10 +1384,21 @@ class SettingsPage(Adw.Bin):
         current = (cfg["hotkey"], cfg["activation"], cfg["model_override"])
         needs_restart = current != self._restart_keys
         self._restart_keys = current
+
+        # Home is a different page and was built before this save; the name is
+        # only read when it renders.
+        self._window.home.set_entries(self._window.history.entries)
+        dictation_changed = (
+            {k: v for k, v in cfg.items() if k != "display_name"}
+            != {k: v for k, v in before.items() if k != "display_name"})
         if needs_restart:
             self._restart("Saved — restarting daemon")
-        else:
+        elif dictation_changed:
             self._window.toast("Saved — in effect from your next dictation")
+        else:
+            # A name-only save changes nothing about dictation, and saying it
+            # takes effect from the next one would be nonsense.
+            self._window.toast("Saved")
 
     def _restart(self, message):
         self._window.toast(message)

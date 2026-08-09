@@ -34,6 +34,11 @@ CLEANUP_SCOPE_CHOICES = ["prose", "all"]
 CLEANUP_STRENGTH_CHOICES = ["grammar", "natural"]
 
 DEFAULT_CONFIG = {
+    # What the app window greets you by. Empty means "work it out from the
+    # system", which on most machines means the login name -- a handle, not a
+    # name, and not something to greet anyone by if they'd rather it didn't.
+    # Read only by the GUI; the daemon never looks at it.
+    "display_name": "",
     # Empty means DEFAULT_MODEL, which is what almost everyone wants. Set this
     # to another faster-whisper model name ("distil-large-v3.5", "base.en"…), a
     # HuggingFace CT2 repo id, or a local directory to use something else.
