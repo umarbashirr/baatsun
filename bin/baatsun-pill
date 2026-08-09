@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bring up the baatsun pill for whatever desktop this is.
 
-Two implementations exist because there is no one way to pin a 5px indicator
+Two implementations exist because there is no one way to pin a small indicator
 above every window on Linux:
 
   GNOME       a GNOME Shell extension (mutter implements neither

@@ -1,8 +1,8 @@
 {
   "uuid": "baatsun@umarbashirr.github.io",
   "name": "Baatsun Pill",
-  "description": "A thin pill at the bottom centre of the screen that shows baatsun's dictation state: dim when idle, breathing red while listening, sweeping blue while transcribing. Stays above every window, including fullscreen ones, and never takes keyboard focus.",
+  "description": "A thin dark pill near the bottom centre of the screen that shows baatsun's dictation state. It never changes colour — it opens: a 6px bar when idle, opening to hold white level bars while listening and a spinner while transcribing. Hover it and it opens into a start/stop button, so a long dictation can be ended with the mouse. Stays above every window, including fullscreen ones, and never takes keyboard focus.",
   "shell-version": ["45", "46", "47", "48", "49"],
   "url": "https://github.com/umarbashirr/baatsun",
-  "version": 1
+  "version": 2
 }

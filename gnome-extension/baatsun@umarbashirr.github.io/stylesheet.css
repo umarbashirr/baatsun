@@ -1,27 +1,40 @@
-/* The pill is 100x5 at rest; extension.js scales it rather than resizing it,
- * so border-radius is expressed against that resting height. */
+/* One dark pill, one colour, at every size and in every state. Nothing here
+ * changes background-color between states — extension.js changes how far open
+ * the pill is and what is inside it, and that is the whole vocabulary.
+ *
+ * border-radius is deliberately absent: the pill's height animates, and a
+ * stadium needs a radius of exactly half that height, so extension.js sets it
+ * inline as the height changes. Anything declared here would be overridden by
+ * that inline style anyway.
+ *
+ * Near-opaque rather than translucent: the pill sits over arbitrary content,
+ * and a see-through indicator is unreadable on a busy background. */
 
 .baatsun-pill {
-  background-color: rgba(255, 255, 255, 0.22);
-  border-radius: 3px;
+  background-color: rgba(28, 28, 30, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
 }
 
-.baatsun-pill-listening {
-  background-color: #ff5c5c;
-  box-shadow: 0 0 8px 2px rgba(255, 92, 92, 0.55);
-}
-
-.baatsun-pill-transcribing {
-  background-color: rgba(92, 157, 255, 0.35);
-  box-shadow: 0 0 8px 2px rgba(92, 157, 255, 0.35);
-}
-
-/* Only visible during transcribing, where it travels the pill's length. */
-.baatsun-pill-sweep {
-  background-color: #5c9dff;
-  border-radius: 3px;
-}
-
+/* No daemon on the socket: the pill recedes rather than disappearing, so the
+ * screen still says where the indicator lives. It never opens in this state,
+ * so this only ever applies to the closed bar. */
 .baatsun-pill-offline {
-  background-color: rgba(255, 255, 255, 0.08);
+  background-color: rgba(28, 28, 30, 0.5);
+  border-color: rgba(255, 255, 255, 0.06);
+  box-shadow: none;
+}
+
+/* extension.js relies on this gap being 4px when it checks the row's width
+ * against the open pill's. */
+.baatsun-pill-bars {
+  spacing: 4px;
+}
+
+/* Allocated 3x11 and scaled vertically from there, so this radius is what a
+ * bar wears at full height. */
+.baatsun-pill-bar {
+  background-color: #ffffff;
+  border-radius: 2px;
 }
