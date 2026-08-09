@@ -4,15 +4,17 @@
 
 A voice dictation tool for Linux: **hold Ctrl+Super (Windows key) anywhere**,
 speak, **release** — it transcribes locally (faster-whisper, CPU) and types
-the text into whatever window or input box is focused (via `ydotool`). True
-push-to-talk, not toggle. Transcription runs fully offline; nothing you say
-ever leaves your machine unless you opt in to the OpenAI cleanup pass, which
-sends the transcript text only.
+the text into whatever window or input box is focused (via `ydotool`).
+Transcription runs fully offline; nothing you say ever leaves your machine
+unless you opt in to the OpenAI cleanup pass, which sends the transcript text
+only.
 
 ## Features
 
-- **Push-to-talk, not toggle** — hold the hotkey, speak, release. No mode to
-  forget you're in.
+- **Push-to-talk, toggle, or both** — hold the hotkey and release when you're
+  done; or press once to start and again to stop; or pick tap-or-hold, which
+  tells the two apart by how long you held the chord. Hold is the default:
+  there's no mode to forget you're in.
 - **Offline transcription** — runs locally on CPU via
   [faster-whisper](https://github.com/SYSTRAN/faster-whisper). Your audio is
   never sent anywhere, and by default neither is the text.
@@ -20,12 +22,18 @@ sends the transcript text only.
   works in any app, not just ones with dictation support built in.
 - **No shortcut registration needed** — reads the keyboard directly below the
   compositor, so it works the same way on any desktop environment.
-- **Always-on-top pill** — a thin bar pinned to the bottom centre of the
+- **Always-on-top pill** — a thin dark pill near the bottom centre of the
   screen, above every window (including fullscreen ones), that never steals
-  focus: dim at rest, red and breathing while listening, blue and sweeping
-  while transcribing.
-- **Tray icon + history window** — see live recording state at a glance, and
-  browse/search/copy/retype past transcripts.
+  focus. It never changes colour; it opens. A 6px bar at rest, opening to hold
+  white level bars while listening and a spinner while transcribing. On GNOME,
+  hovering it opens it into a start/stop button, so a hands-free dictation can
+  be ended with the mouse.
+- **A real app window** — five pages behind a sidebar: Home (a greeting, a
+  quote, and what you've actually been doing — dictations, words, time saved,
+  streak, and a 14-day chart), Dictate (live state, level meter, and which
+  window the next transcript will land in), History (grouped by day,
+  searchable, filterable), Words (the vocabulary whisper is biased toward),
+  and Settings. Plus a tray icon for live state at a glance.
 - **Accurate English** — whisper `small.en`, int8 on CPU: the smallest model
   that gets every word right and punctuates properly, at ~1.6s per dictation.
 - **Optional cleanup pass** — tidies punctuation and filler words via OpenAI
@@ -74,15 +82,20 @@ src/baatsun.py (background daemon, systemd --user service)
         status     — "recording" or "idle"
         history    — one-shot JSON dump of all past transcripts
         subscribe  — hold the connection open, stream newline-delimited
-                     JSON events (state changes, new/deleted transcripts)
-                     as they happen — this is what the GUI/tray apps use
+                     JSON events (state changes, new/deleted transcripts,
+                     focus changes) as they happen — this is what the
+                     GUI/tray/pill use. The stream opens with the current
+                     state and focus, so a client that connects mid-dictation
+                     is right immediately instead of at the next change
         clear      — wipe all transcript history
         delete <id> — remove a single transcript by id
         retype <id> — ydotool-type a past transcript into the focused
                      window again
         focus <json> — record which window has focus ({app, title}), sent by
-                     the GNOME extension on every focus/title change; decides
-                     whether a transcript is cleaned up or typed verbatim
+                     the GNOME extension on every focus/title change and on
+                     every reconnect; decides whether a transcript is cleaned
+                     up or typed verbatim, and is re-broadcast to subscribers
+                     as a `focus` event so the app window can show it
 
 src/baatsun_config.py (stdlib only — shared by both Python interpreters below)
    Reads/writes ~/.config/baatsun/config.json: model override, compute type,
@@ -111,14 +124,37 @@ src/baatsun_cleanup.py (stdlib only — urllib, no new venv dependency)
    never cost you a dictation.
 
 src/baatsun_gui.py (GTK4 + libadwaita, system Python — needs PyGObject)
-   The full app window: record/stop button, live state in the header
-   ("Listening…"/"Transcribing…"), a search box that filters history live,
-   and per-transcript copy/retype/delete actions. Fetches `history` on
-   connect, then stays subscribed for live updates. A gear icon opens
-   Settings (hotkey, cleanup toggle/scope, and the OpenAI API key — writes
-   baatsun_config and runs `systemctl --user restart baatsun.service`; the key
-   goes to its own 0600 file, not config.json). Closing the window hides
-   it rather than quitting, so the tray icon can re-present it instantly.
+   The app window: an Adw.NavigationSplitView with five pages, collapsing to
+   one pane below 680px.
+     Home      what the app opens on. A time-of-day greeting, a rotating
+               quote, four stat tiles (dictations, words, estimated time
+               saved, day streak) and a 14-day activity chart. All of it is
+               computed from the history the daemon already keeps — nothing
+               extra is stored for it. "Time saved" measures the words against
+               40 wpm of typing, less the time the microphone was actually
+               open, and says so in a tooltip rather than pretending to be
+               precise. The chart is one series in the theme's own accent, so
+               light and dark are each chosen by libadwaita; only the busiest
+               bar is labelled, and a "Show as a list" expander carries every
+               value for anyone not using a mouse.
+     Dictate   record control, a level meter, and the focused-window card —
+               which app the next transcript lands in and whether it will be
+               cleaned up or typed verbatim. Reads the daemon's `focus` event.
+     History   past transcripts grouped by day, searchable, filterable by
+               cleaned/verbatim, with copy/retype/delete/show-original per
+               row. Rows cap at four lines and expand when clicked: a
+               fifteen-minute dictation is one entry and thousands of words.
+     Words     the vocabulary, one term per row instead of one comma-separated
+               field. Saved on edit with no restart — the transcription path
+               re-reads config on every dictation.
+     Settings  hotkey, activation, cleanup, model, compute type, daemon. Apply
+               restarts the daemon only when the hotkey, activation mode or
+               model changed; everything else is re-read per dictation, and a
+               needless restart costs a model reload.
+   Fetches `history` on connect, then stays subscribed. Closing hides rather
+   than quits, so the tray icon can re-present it instantly. Uses no
+   Gtk.DrawingArea anywhere: cairo drawing from Python needs the separate
+   python3-gi-cairo package, so the level meter is animated boxes instead.
 
 src/baatsun_tray.py (GTK3 + AppIndicator, separate process, system Python)
    Tray/status icon whose glyph reflects daemon state (idle/listening/
@@ -130,20 +166,26 @@ src/baatsun_tray.py (GTK3 + AppIndicator, separate process, system Python)
    a second window if it's already running (GApplication D-Bus activation).
 
 src/baatsun_pill.py (GTK4 + gtk4-layer-shell, non-GNOME fallback)
-   The bottom-centre pill for wlr-layer-shell compositors (sway, Hyprland,
-   ...): an undecorated GTK4 window anchored to the bottom of the output on
+   The pill for wlr-layer-shell compositors (sway, Hyprland, ...): an
+   undecorated GTK4 window anchored near the bottom of the output on
    the overlay layer, keyboard mode NONE and an empty input region so it can
-   never take focus or eat a click. Cairo-draws the pill itself (rounded
-   rect, glow, breathing/sweep animation) driven off the frame clock, fed by
-   the same subscribe stream as the tray. Not usable on GNOME: mutter
-   implements neither wlr-layer-shell nor client-side window positioning.
+   never take focus or eat a click. That empty region is also why this one is
+   indicator-only, with no hover button. Cairo-draws the pill itself (the
+   open/close morph, drop shadow, level bars and spinner) driven off the frame
+   clock, fed by the same subscribe stream as the tray. Not usable on
+   GNOME: mutter implements neither wlr-layer-shell nor client-side window
+   positioning.
 
 gnome-extension/baatsun@umarbashirr.github.io/ (GJS, runs inside GNOME Shell)
    The pill's GNOME implementation — a Clutter actor added to the Shell's
    own chrome via Main.layoutManager.addChrome(), which is the only way to
    sit above every window (including fullscreen ones) and stay
    focus-transparent on GNOME/Wayland. Reads the same unix socket directly
-   via GJS's Gio bindings; no extra IPC. bin/baatsun-pill enables this
+   via GJS's Gio bindings; no extra IPC, and writes "toggle" back down it when
+   the hover button is clicked. The actor is reactive but can_focus: false, so
+   clicking it never moves keyboard focus off the window being dictated into —
+   which is both where ydotool types and what baatsun_context classifies.
+   bin/baatsun-pill enables this
    extension on GNOME instead of launching baatsun_pill.py. It also reports the
    focused window's class and title to the daemon on every focus (and title)
    change — on Wayland the Shell is the only thing that can see this, and it's
@@ -349,14 +391,68 @@ app, in addition to the tray icon and running it from a terminal.
 toggle command over the daemon's unix socket) — useful for testing without
 touching the keyboard, but not needed for day-to-day use.
 
+### Hotkey behaviour — for long dictations
+
+Holding a two-key chord is fine for a sentence and tiring for a blog post.
+**Hotkey behaviour** in Settings offers three ways to drive the same chord:
+
+| Setting | Config value | Behaviour |
+| --- | --- | --- |
+| Record while held | `hold` | Records while the chord is down. The default. |
+| Press to start, press again to stop | `toggle` | One press starts, the next stops. Releasing does nothing. |
+| Tap to start and stop, hold to talk | `hybrid` | Both, told apart by duration. |
+
+**Tap-or-hold** is the one to pick if you don't want to choose. Hold the chord
+and it behaves exactly as it always has — speak, release, done. Tap it instead
+(under 0.4s, `TAP_SECONDS` in `src/baatsun.py`) and the recording stays up with
+your hands free until you press again. Short dictations keep push-to-talk; long
+ones don't need you holding anything.
+
+Two things to know before leaving `hold`:
+
+- **Nothing ends the recording but you.** In hold mode an accidental brush of
+  the chord starts and immediately ends a recording that gets discarded as too
+  short. In the other two it can open one that runs until you notice. Watch the
+  pill — if it's open with bars jumping in it, you're still recording.
+- **There's a 15-minute cap**, after which the recording stops and transcribes
+  itself. It exists so a start you didn't notice can't fill `/tmp` overnight
+  and then hand whisper an eight-hour file. No real dictation should reach it.
+
 ### The pill
 
-A thin bar pinned to the bottom centre of the screen, above every window
-(including fullscreen ones): dim grey at rest, red and breathing while
-listening, blue with a sweeping highlight while transcribing, and barely
-visible if the daemon isn't reachable. It's the fastest way to confirm the
-hotkey registered — no window to open, and it can't steal your keyboard
-focus, so the transcript still lands wherever you were typing.
+One dark pill near the bottom centre of the screen, above every window
+(including fullscreen ones). It never changes colour and it is never a
+different object — it opens and closes, and everything happens inside it:
+
+| state | the pill |
+|---|---|
+| idle | a 68x6 bar, empty |
+| listening | opens to 52x16 to hold a row of white level bars |
+| transcribing | opens to hold a white spinner |
+| offline | the closed bar, receded, if the daemon isn't reachable |
+
+It's the fastest way to confirm the hotkey registered — no window to open, and
+it can't steal your keyboard focus, so the transcript still lands wherever you
+were typing.
+
+The bars aren't reading your microphone. The daemon records straight to a file
+and broadcasts no levels, so the meter says "capturing", not "capturing *this*
+loudly".
+
+**On GNOME, it's also a button.** Hover it and it opens the same way, this time
+onto a white ▶ when idle or ■ while recording — the mouse equivalent of the
+hotkey, and the natural way to stop a hands-free dictation. The background
+stays the same black throughout; nothing about the pill turns a different
+colour. Hovering while a transcript is being produced leaves the spinner alone,
+because a click then would only queue up and start a fresh recording the moment
+the text landed. Hovering is the only thing that takes pointer input away from
+the window underneath, so the target is kept to barely more than the pill
+itself — though it is deliberately taller than the 6px closed bar, which is far
+too thin to ask anyone to hit.
+
+The `wlr-layer-shell` fallback has no hover button — its window is created with
+an empty input region, which is exactly what stops it eating clicks on
+compositors this project can't test against. Use the hotkey there.
 
 It autostarts on login (see [Installation](#installation)). Where it comes
 from depends on your desktop:
@@ -404,6 +500,10 @@ All settings live in `~/.config/baatsun/config.json`; defaults are defined in
 
 - **hotkey** — `ctrl+super` (default) / `ctrl+alt` / `alt+super` /
   `ctrl+shift`.
+- **activation** — `hold` (default) records only while the chord is down;
+  `toggle` starts on one press and stops on the next; `hybrid` does both,
+  splitting on how long the chord was held. See
+  [Hotkey behaviour](#hotkey-behaviour--for-long-dictations).
 
 The gear icon in `baatsun-gui` is the normal way to change this. It writes the
 config file and restarts the daemon for you, leaving the values below

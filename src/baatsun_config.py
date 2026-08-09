@@ -40,6 +40,16 @@ DEFAULT_CONFIG = {
     "model_override": "",
     "compute_type": "int8",
     "hotkey": "ctrl+super",
+    # "hold" records only while the hotkey is down. "toggle" starts on one
+    # press and stops on the next, so your hands are free for the length of a
+    # long dictation. "hybrid" is both, told apart by how long the chord is
+    # down: tap it and the recording stays up until you press again, hold it
+    # and it ends on release like push-to-talk always has.
+    #
+    # Hold stays the default because it is the only one of the three where an
+    # accidental brush of the chord ends itself. In the other two it can leave a
+    # recording running until you notice the pill has gone red.
+    "activation": "hold",
     # Off until an API key is entered in Settings; without one there is nothing
     # to call and every transcript is typed exactly as transcribed.
     "cleanup_enabled": False,
@@ -68,6 +78,11 @@ DEFAULT_CONFIG = {
 }
 
 COMPUTE_TYPE_CHOICES = ["int8", "int8_float16", "float16", "float32"]
+# Offered in the Settings page beside DEFAULT_MODEL. Not exhaustive — anything
+# faster-whisper resolves still works if written into model_override by hand;
+# these are the ones worth clicking. Ordered by size.
+MODEL_CHOICES = ["base.en", "distil-small.en", "medium.en", "distil-large-v3.5"]
+ACTIVATION_CHOICES = ["hold", "toggle", "hybrid"]
 # label -> (primary key group, secondary key group), resolved to evdev
 # keycodes by baatsun.py (which is the only side that has evdev installed).
 HOTKEY_CHOICES = ["ctrl+super", "ctrl+alt", "alt+super", "ctrl+shift"]

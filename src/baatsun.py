@@ -23,8 +23,10 @@ from evdev import InputDevice, ecodes, list_devices
 import baatsun_cleanup
 import baatsun_context
 from baatsun_config import (
+    ACTIVATION_CHOICES,
     CONFIG_PATH,
     WHISPER_LANGUAGE,
+    cleanup_ready,
     load_api_key,
     load_config,
     resolve_model,
@@ -56,20 +58,48 @@ def resolve_hotkey(name):
 
 PRIMARY_KEYS, SECONDARY_KEYS = resolve_hotkey(config["hotkey"])
 
+
+def resolve_activation(name):
+    if name in ACTIVATION_CHOICES:
+        return name
+    print(f"[baatsun] invalid activation {name!r}, falling back to hold", file=sys.stderr)
+    return "hold"
+
+
+ACTIVATION = resolve_activation(config.get("activation"))
+
 HISTORY_DIR = os.path.expanduser("~/.local/share/baatsun")
 HISTORY_PATH = os.path.join(HISTORY_DIR, "history.json")
 HISTORY_LIMIT = 500
+
+# Backstop for toggle mode, where nothing structurally ends a recording the way
+# releasing the key does. Without it, a start you didn't notice runs until you
+# do — filling /tmp at ~2 MB a minute and then handing whisper an hour of audio
+# to chew through. Well past any real dictation, so it only ever catches
+# mistakes.
+MAX_RECORDING_SECONDS = 15 * 60
 
 state_lock = threading.Lock()
 state = {
     "recording": False,
     "proc": None,       # pw-record subprocess
     "wav_path": None,
+    "timer": None,      # MAX_RECORDING_SECONDS watchdog for the current recording
+    "started": None,    # monotonic clock at the start, for the recorded duration
 }
 hotkey_state = {
-    "pressed": set(),   # keycodes currently held, across all keyboards
-    "held": False,      # whether the ctrl+meta combo is currently active
+    "pressed": set(),     # keycodes currently held, across all keyboards
+    "held": False,        # whether the ctrl+meta combo is currently active
+    "press_time": 0.0,    # monotonic time the combo was last formed (hybrid)
+    "latched": False,     # hybrid: a tap left this recording running
 }
+
+# Hybrid mode's dividing line between a tap and a hold. Below it, releasing the
+# chord leaves the recording running until the next press; above it, the release
+# ends the recording the way push-to-talk always has. Set so that a deliberate
+# tap lands well under and the shortest useful held dictation — "yes", "no", a
+# file name — lands well over.
+TAP_SECONDS = 0.4
 
 # Last window the GNOME Shell extension told us had focus, used to decide
 # whether a transcript is prose worth cleaning up or a coding prompt that must
@@ -78,6 +108,13 @@ hotkey_state = {
 # lock: it is written from socket threads and read mid-transcription.
 focus_lock = threading.Lock()
 focus = {"app": "", "title": ""}
+# The state a newly-connected subscriber should be told about before anything
+# else happens. Without this a GUI opened mid-transcription shows "Ready" until
+# the next state change, which is the one moment it most needs to be right.
+# Carries "type" from the start: it is sent verbatim to new subscribers, and a
+# payload without it is silently ignored by every client's event dispatch.
+current_state = {"type": "state", "state": "idle"}
+current_state_lock = threading.Lock()
 
 # Transcript history, newest-last, persisted to HISTORY_PATH. Guarded by
 # history_lock, which is separate from state_lock so broadcasting to GUI
@@ -112,19 +149,34 @@ def save_history():
     os.replace(tmp_path, HISTORY_PATH)
 
 
-def add_history_entry(text, raw=None):
+def add_history_entry(text, raw=None, app=None, context=None, secs=None):
     """Record a transcript, keeping the pre-cleanup text when it differed.
 
     "raw" is omitted when cleanup made no change or didn't run, so the common
     entry stays the shape it has always been and the file doesn't double in
     size. When it is present the GUI offers to show it: cleanup rewords things,
     and you can't audit a rewrite you can't see next to the original.
+
+    "app"/"context" say where this landed and how it was treated. Both are
+    omitted when unknown rather than written empty, so an entry from a desktop
+    with no focus reporting stays the shape it has always been, and so the GUI
+    can tell "typed into nothing we could name" apart from "typed into a window
+    called empty string". Entries written before this existed simply lack them.
     """
     global next_entry_id
     with history_lock:
         entry = {"id": next_entry_id, "text": text, "ts": time.time()}
         if raw is not None and raw != text:
             entry["raw"] = raw
+        if app:
+            entry["app"] = app
+        if context:
+            entry["context"] = context
+        # How long the mic was actually open. Lets the Home page compute time
+        # saved from what happened rather than from an assumed speaking rate;
+        # entries without it fall back to an estimate.
+        if secs:
+            entry["secs"] = round(secs, 1)
         next_entry_id += 1
         history.append(entry)
         del history[:-HISTORY_LIMIT]
@@ -169,6 +221,37 @@ def broadcast(event):
             subscribers.remove(sock)
 
 
+def broadcast_state(state, **extra):
+    """Announce a state change and remember it for late subscribers."""
+    event = {"type": "state", "state": state, **extra}
+    with current_state_lock:
+        current_state.clear()
+        current_state.update(event)
+    broadcast(event)
+
+
+def focus_event():
+    """The focus payload sent to subscribers: where text will land, and how it
+    will be treated when it gets there.
+
+    The verdict is computed here rather than in the GUI because this is where
+    the answer is actually decided — the same config and the same classifier
+    the transcription path will consult. A GUI working it out for itself would
+    be a second implementation to keep in step.
+    """
+    with focus_lock:
+        app, title = focus["app"], focus["title"]
+    cfg = load_config()
+    return {
+        "type": "focus",
+        "app": app,
+        "title": title,
+        "context": baatsun_context.classify(app, title),
+        "cleanup": bool(cleanup_ready(cfg)
+                        and baatsun_context.should_clean(cfg, app, title)),
+    }
+
+
 def log(msg):
     print(f"[baatsun] {msg}", file=sys.stderr, flush=True)
 
@@ -190,11 +273,41 @@ def start_recording():
     state["recording"] = True
     state["proc"] = proc
     state["wav_path"] = wav_path
-    broadcast({"type": "state", "state": "listening"})
+    state["started"] = time.monotonic()
+    timer = threading.Timer(MAX_RECORDING_SECONDS, on_recording_timeout, args=(wav_path,))
+    timer.daemon = True
+    state["timer"] = timer
+    timer.start()
+    broadcast_state("listening")
     log(f"recording started -> {wav_path}")
 
 
-def maybe_clean(text):
+def cancel_recording_timer():
+    """Disarm the watchdog. Callers must already hold state_lock."""
+    timer = state["timer"]
+    state["timer"] = None
+    if timer is not None:
+        timer.cancel()
+
+
+def on_recording_timeout(wav_path):
+    """Stop and transcribe a recording that has run past the limit.
+
+    Transcribes rather than discards: fifteen minutes of speech is worth
+    keeping, and the person who hit this is far more likely to have been
+    dictating than to have left the mic open. The wav_path check makes this a
+    no-op if the recording it was armed for has already ended — cancel() loses
+    the race when the timer has begun running but not yet taken the lock.
+    """
+    with state_lock:
+        if not state["recording"] or state["wav_path"] != wav_path:
+            return
+        log(f"recording hit the {MAX_RECORDING_SECONDS // 60}-minute limit — "
+            "stopping and transcribing")
+        stop_recording_and_transcribe()
+
+
+def maybe_clean(text, app, title):
     """Return text polished by OpenAI, or the original if that doesn't apply.
 
     Config is re-read per dictation rather than cached at startup so toggling
@@ -209,9 +322,6 @@ def maybe_clean(text):
     if not api_key:
         log("cleanup is on but no API key is set — typing the raw transcript")
         return text
-
-    with focus_lock:
-        app, title = focus["app"], focus["title"]
 
     if not baatsun_context.should_clean(cfg, app, title):
         log(f"context {baatsun_context.classify(app, title)} ({app or 'unknown'}) "
@@ -239,11 +349,16 @@ def maybe_clean(text):
 
 
 def stop_recording_and_transcribe():
+    cancel_recording_timer()
     proc = state["proc"]
     wav_path = state["wav_path"]
+    started = state["started"]
     state["recording"] = False
     state["proc"] = None
     state["wav_path"] = None
+    state["started"] = None
+    # Monotonic, so a clock adjustment mid-dictation can't make this negative.
+    secs = None if started is None else time.monotonic() - started
 
     if proc is None or wav_path is None:
         return
@@ -255,12 +370,12 @@ def stop_recording_and_transcribe():
         proc.kill()
         proc.wait()
 
-    broadcast({"type": "state", "state": "transcribing"})
+    broadcast_state("transcribing")
 
     try:
         if os.path.getsize(wav_path) < 1024:
             log("recording too short, skipping")
-            broadcast({"type": "state", "state": "idle", "reason": "too_short"})
+            broadcast_state("idle", reason="too_short")
             return
 
         # initial_prompt biases the decoder toward names it would otherwise
@@ -277,16 +392,25 @@ def stop_recording_and_transcribe():
 
         if not text:
             log("empty transcript")
-            broadcast({"type": "state", "state": "idle", "reason": "empty"})
+            broadcast_state("idle", reason="empty")
             return
 
         log(f"transcript: {text!r}")
+        # Read the focused window once and use it for both decisions. Two
+        # separate reads could disagree if the user switched windows mid-
+        # cleanup, and an entry that says "verbatim" about text that was in
+        # fact rewritten is worse than one that is a window out of date.
+        with focus_lock:
+            app, title = focus["app"], focus["title"]
+        context = baatsun_context.classify(app, title)
+
         raw = text
-        text = maybe_clean(text)
+        text = maybe_clean(text, app, title)
         subprocess.run(["ydotool", "type", "--", text], check=False)
-        entry = add_history_entry(text, raw)
+        entry = add_history_entry(text, raw, app=app, context=context,
+                                  secs=secs)
         broadcast({"type": "transcript", "entry": entry})
-        broadcast({"type": "state", "state": "idle"})
+        broadcast_state("idle")
     finally:
         try:
             os.remove(wav_path)
@@ -306,6 +430,7 @@ def abandon_recording():
     typed first rather than being cut off mid-word.
     """
     with state_lock:
+        cancel_recording_timer()
         proc = state["proc"]
         wav_path = state["wav_path"]
         state["recording"] = False
@@ -365,10 +490,60 @@ def on_key_event(code, value):
         now_held = bool(pressed & PRIMARY_KEYS) and bool(pressed & SECONDARY_KEYS)
         if now_held and not hotkey_state["held"]:
             hotkey_state["held"] = True
-            start_recording()
+            hotkey_state["press_time"] = time.monotonic()
+            on_hotkey_press()
         elif not now_held and hotkey_state["held"]:
             hotkey_state["held"] = False
-            stop_recording_and_transcribe()
+            on_hotkey_release()
+
+
+def on_hotkey_press():
+    """The chord was just formed. Callers already hold state_lock.
+
+    Calls the start/stop pair directly rather than going through
+    handle_toggle(), which takes the state_lock we are already inside —
+    threading.Lock is not reentrant, so that would deadlock the keyboard thread
+    and leave the hotkey dead until the daemon restarts.
+    """
+    if ACTIVATION == "hold":
+        start_recording()
+        return
+
+    # Clear the latch before deciding anything. If the MAX_RECORDING_SECONDS
+    # watchdog ended a latched recording, this flag would otherwise still be
+    # set and would swallow the release of the next press, leaving a
+    # hold-style recording that never ends.
+    hotkey_state["latched"] = False
+
+    # toggle and hybrid both stop on the press that follows a running
+    # recording. Under hybrid that recording can only ever be a latched one: a
+    # held recording ends on its own release, so nothing is still running by
+    # the time a later press arrives.
+    if state["recording"]:
+        stop_recording_and_transcribe()
+    else:
+        start_recording()
+
+
+def on_hotkey_release():
+    """The chord was just broken. Callers already hold state_lock."""
+    if ACTIVATION == "hold":
+        stop_recording_and_transcribe()
+        return
+
+    # Toggle ignores releases entirely; so does hybrid once a tap has latched,
+    # and when the press already stopped the recording.
+    if ACTIVATION != "hybrid" or hotkey_state["latched"] or not state["recording"]:
+        return
+
+    # This is the release that decides which gesture the user made. Held long
+    # enough to be deliberate, so end it here like push-to-talk. Otherwise it
+    # was a tap: leave the recording up for the next press to stop.
+    if time.monotonic() - hotkey_state["press_time"] >= TAP_SECONDS:
+        stop_recording_and_transcribe()
+    else:
+        hotkey_state["latched"] = True
+        log("tap — recording latched, press the hotkey again to stop")
 
 
 def watch_device(dev):
@@ -382,6 +557,12 @@ def watch_device(dev):
 
 
 def start_hotkey_listener():
+    log(f"hotkey {config['hotkey']} in {ACTIVATION} mode " + {
+        "hold": "(records while held)",
+        "toggle": "(press to start, press again to stop)",
+        "hybrid": f"(hold to talk; tap under {TAP_SECONDS}s to keep recording "
+                  "until the next press)",
+    }[ACTIVATION])
     devices = find_keyboard_devices()
     if not devices:
         log("WARNING: no keyboard device found for hotkey listening")
@@ -434,9 +615,14 @@ class Handler(socketserver.BaseRequestHandler):
         except (ValueError, AttributeError):
             self._reply(b"bad_focus")
             return
+        # Only announce a real change. The extension reports on every title
+        # change, which in a browser is every keystroke in the address bar.
         with focus_lock:
+            changed = (focus["app"], focus["title"]) != (app, title)
             focus["app"] = app
             focus["title"] = title
+        if changed:
+            broadcast(focus_event())
         self._reply(b"ok")
 
     def _reply(self, payload):
@@ -481,6 +667,19 @@ class Handler(socketserver.BaseRequestHandler):
         with subscribers_lock:
             subscribers.append(self.request)
         log(f"gui subscriber connected ({len(subscribers)} total)")
+
+        # Bring the newcomer up to date before it starts waiting for changes.
+        # Sent only to this socket: everyone else already knows. A failure here
+        # means the client vanished between connecting and now, which the read
+        # loop below is about to notice anyway.
+        try:
+            with current_state_lock:
+                opening = dict(current_state)
+            for event in (opening, focus_event()):
+                self.request.sendall((json.dumps(event) + "\n").encode())
+        except OSError:
+            pass
+
         try:
             # Block until the client disconnects; broadcast() pushes events
             # to self.request directly from other threads in the meantime.
