@@ -10,7 +10,7 @@
     "dev": "concurrently -k -n vite,electron -c cyan,magenta \"vite\" \"wait-on tcp:5173 && npm run electron\"",
     "build": "vite build",
     "start": "npm run build && BAATSUN_DEV=0 electron . --no-sandbox --ozone-platform-hint=auto",
-    "electron": "electron . --no-sandbox --ozone-platform-hint=auto",
+    "electron": "BAATSUN_DEV=1 electron . --no-sandbox --ozone-platform-hint=auto",
     "preview": "vite preview"
   },
   "devDependencies": {

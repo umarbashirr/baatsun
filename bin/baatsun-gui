@@ -78,7 +78,10 @@ def main():
     # Electron rather than pinned, because pinning it breaks the other one.
     argv.append("--ozone-platform-hint=auto")
 
-    os.environ.setdefault("BAATSUN_DEV", "0")
+    # Set, not setdefault. This is the installed launcher, so it should never
+    # be the thing that loads the dev server — and setdefault let a stray
+    # BAATSUN_DEV=1 already in the environment decide that for it.
+    os.environ["BAATSUN_DEV"] = "0"
     # Replace this process rather than forking: the tray and the .desktop entry
     # both expect the thing they launched to *be* the window.
     os.execv(electron, argv + sys.argv[1:])

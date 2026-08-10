@@ -35,6 +35,10 @@ mkdir -p "$STAGING/usr/share/gnome-shell/extensions"
 
 cp "$REPO_ROOT"/src/*.py "$STAGING/opt/baatsun/src/"
 
+# postinst builds the venv from this rather than from an unpinned package list,
+# so it has to ship inside the package.
+install -m 644 "$REPO_ROOT/packaging/requirements.txt" "$STAGING/opt/baatsun/requirements.txt"
+
 # The application window is an Electron app, so the built renderer, the main
 # process and the Electron runtime itself all have to ship. This is what makes
 # the package large (~200 MB installed, nearly all of it the runtime) — the
@@ -84,4 +88,10 @@ echo "Installed-Size: ${INSTALLED_SIZE:-0}" >> "$STAGING/DEBIAN/control"
 mkdir -p "$OUT_DIR"
 dpkg-deb --root-owner-group --build "$STAGING" "$OUT_DIR/$PKG_NAME"
 
+# Published alongside the .deb so install.sh can verify what it downloaded.
+# Written with a bare filename so `sha256sum -c` works from the directory the
+# installer downloads into.
+(cd "$OUT_DIR" && sha256sum "$PKG_NAME" > "$PKG_NAME.sha256")
+
 echo "Built $OUT_DIR/$PKG_NAME"
+echo "       $OUT_DIR/$PKG_NAME.sha256"

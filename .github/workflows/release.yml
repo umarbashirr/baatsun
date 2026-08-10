@@ -21,5 +21,7 @@ jobs:
       - name: Attach .deb to release
         uses: softprops/action-gh-release@v2
         with:
-          files: packaging/dist/*.deb
+          files: |
+            packaging/dist/*.deb
+            packaging/dist/*.deb.sha256
           generate_release_notes: true

@@ -21,7 +21,17 @@ const store = require('./store')
 const keycheck = require('./keycheck')
 
 const DEV_SERVER = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173'
-const isDev = !app.isPackaged && process.env.BAATSUN_DEV !== '0'
+// Opt in, never fall in. This decides whether the window loads the built
+// bundle off disk or whatever is answering on a local HTTP port, and that
+// window holds both API keys and a bridge that can type into the focused
+// window (daemon:retype) and restart a service. app.isPackaged is always false
+// here — the app ships as `electron /opt/baatsun/electron`, it is never
+// electron-builder-packaged — so it cannot be part of this test, which left a
+// single env var standing between the installed app and localhost:5173, in the
+// direction where anything unset or unexpected chose the dev server.
+// Requiring an explicit "1" means the safe branch is the default for every
+// value, including unset, empty and inherited junk.
+const isDev = process.env.BAATSUN_DEV === '1'
 
 let mainWindow = null
 let unsubscribe = null

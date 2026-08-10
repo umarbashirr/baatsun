@@ -4,6 +4,7 @@
 set -e
 
 VENV=/opt/baatsun/venv
+REQUIREMENTS=/opt/baatsun/requirements.txt
 
 case "$1" in
     configure)
@@ -12,9 +13,20 @@ case "$1" in
             python3 -m venv "$VENV"
         fi
 
-        echo "baatsun: installing faster-whisper + numpy + evdev into the virtualenv (needs network access)..."
-        "$VENV/bin/pip" install --upgrade pip --quiet
-        "$VENV/bin/pip" install --upgrade faster-whisper numpy evdev --quiet
+        # Pinned, from requirements.txt, rather than `--upgrade faster-whisper
+        # numpy evdev`. This runs as root with network access, so "whatever is
+        # newest on PyPI right now" decided what executed as root and made two
+        # installs of the same .deb differ. See the header of that file.
+        #
+        # The pip self-upgrade that used to run here is gone for the same
+        # reason: it was one more unpinned root install, and the pip shipped
+        # with python3-venv already installs these wheels.
+        echo "baatsun: installing the transcription dependencies into the virtualenv (needs network access)..."
+        if [ ! -f "$REQUIREMENTS" ]; then
+            echo "baatsun: $REQUIREMENTS is missing; cannot build the virtualenv." >&2
+            exit 1
+        fi
+        "$VENV/bin/pip" install --quiet --require-virtualenv -r "$REQUIREMENTS"
 
         chmod -R a+rX /opt/baatsun
 
