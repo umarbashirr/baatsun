@@ -36,12 +36,14 @@ the audio itself.
   white level bars while listening and a spinner while transcribing. On GNOME,
   hovering it opens it into a start/stop button, so a hands-free dictation can
   be ended with the mouse.
-- **A real app window** — five pages behind a sidebar: Home (a greeting, a
+- **A real app window** — six pages behind a sidebar: Home (a greeting, a
   quote, and what you've actually been doing — dictations, words, time saved,
   streak, time spoken, what the cleanup pass has cost you at OpenAI, and a
   14-day chart), Dictate (live state, level meter, and which
   window the next transcript will land in), History (grouped by day,
-  searchable, filterable), Words (the vocabulary whisper is biased toward),
+  searchable, filterable), Costs (what ElevenLabs and OpenAI have billed,
+  today/7 days/30 days/all, with the rates it used and what it could not
+  attribute), Words (the vocabulary whisper is biased toward),
   and Settings. Plus a tray icon for live state at a glance.
 - **Accurate English** — whisper `small.en`, int8 on CPU: the smallest model
   that gets every word right and punctuates properly, at ~1.6s per dictation.

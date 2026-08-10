@@ -140,6 +140,20 @@ export function humanSpend(usd) {
   return `$${usd.toFixed(2)}`
 }
 
+/**
+ * Like humanSpend, but never rounds a real charge away to nothing.
+ *
+ * The Home tile has one line to give a figure in, so "<$0.01" is the honest
+ * summary there. The Costs page is answering exactly what a vendor billed, has
+ * the room for the digits, and a column of "<$0.01" would hide which of the two
+ * vendors the money actually went to.
+ */
+export function exactSpend(usd) {
+  if (!usd) return '$0'
+  if (usd < 0.01) return `$${usd.toFixed(4)}`
+  return `$${usd.toFixed(2)}`
+}
+
 export function groupByDay(entries) {
   const today = new Date()
   today.setHours(0, 0, 0, 0)

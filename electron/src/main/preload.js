@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('baatsun', {
   status: () => call('daemon:status'),
   history: () => call('daemon:history'),
   historyFromDisk: () => call('history:disk'),
+  cost: () => call('daemon:cost'),
   clearHistory: () => call('daemon:clear'),
   deleteEntry: (id) => call('daemon:delete', id),
   retypeEntry: (id) => call('daemon:retype', id),
