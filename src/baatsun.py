@@ -126,6 +126,31 @@ DEVICE_DIR = "/dev/input"
 watched_lock = threading.Lock()
 watched_paths = set()
 
+# Devices this daemon must never watch, matched against the device name in
+# lowercase.
+#
+# ydotool types every transcript through a uinput device it creates for the call
+# and tears down when it exits. That device advertises a full keyboard, so the
+# scan above adopts it and the daemon spends the length of a transcript watching
+# itself type. Two things follow, one cosmetic and one not:
+#
+#   - the node disappears the moment ydotool exits, so every dictation left a
+#     "lost keyboard device /dev/input/eventN: [Errno 19] No such device" in the
+#     journal, which is what sent us looking here;
+#   - refresh_chord() pools held keys across *all* watched devices, so injected
+#     keystrokes are indistinguishable from the real keyboard's. ydotool holds
+#     shift down for every capital letter, so with a shift-based hotkey
+#     (ctrl+shift, super+shift) typing a transcript into a window while the user
+#     happens to be resting a finger on ctrl fires the chord — the app triggers
+#     a dictation off its own output. The default ctrl+super chord never collides
+#     with plain typing, which is why this survived this long.
+#
+# Matched by name rather than by BUS_VIRTUAL, deliberately: plenty of legitimate
+# keyboards are virtual (remote desktop, Synergy/Barrier, on-screen keyboards)
+# and excluding the whole bus would break the hotkey for those users to fix a
+# problem this daemon causes itself.
+INJECTOR_DEVICE_NAMES = ("ydotool",)
+
 # Hybrid mode's dividing line between a tap and a hold. Below it, releasing the
 # chord leaves the recording running until the next press; above it, the release
 # ends the recording the way push-to-talk always has. Set so that a deliberate
@@ -625,7 +650,11 @@ def find_keyboard_devices(skip=()):
         except OSError:
             continue
         caps = dev.capabilities().get(ecodes.EV_KEY, [])
-        if ecodes.KEY_A in caps and ecodes.KEY_LEFTCTRL in caps:
+        if is_injector(dev):
+            # Closed like any other device we don't want, but never watched:
+            # see INJECTOR_DEVICE_NAMES.
+            close_device(dev)
+        elif ecodes.KEY_A in caps and ecodes.KEY_LEFTCTRL in caps:
             devices.append(dev)
         else:
             # Every mouse, lid switch and power button gets opened by this
@@ -634,6 +663,22 @@ def find_keyboard_devices(skip=()):
             # descriptors.
             close_device(dev)
     return devices
+
+
+def is_injector(dev):
+    """Is this one of our own synthetic keyboards rather than a real one?
+
+    Reading the name can itself fail on a node that vanished between the
+    listing and here — which is exactly what ydotool's device does — so a
+    device we can't identify is treated as an injector. Refusing to watch a
+    keyboard we couldn't name is the safe direction: the rescan is two seconds
+    away and will pick it up properly if it was real and is still there.
+    """
+    try:
+        name = (dev.name or "").lower()
+    except OSError:
+        return True
+    return any(tag in name for tag in INJECTOR_DEVICE_NAMES)
 
 
 def close_device(dev):
