@@ -114,8 +114,17 @@ export function Toggle({ checked, onChange, label }) {
         checked ? 'bg-saffron-500' : 'bg-ink-700'
       }`}
     >
+      {/*
+        left-0 is load-bearing. Without it the knob has no inset, so it falls
+        back to its static position — and a button carries a UA text-align of
+        center, which centres that origin in the track. The translate below
+        then measured from 13px instead of 0, putting the "on" knob at 36-56px
+        inside a 46px track: hanging off the right edge, with "off" already
+        sitting half-way across. Preflight resets a button's padding, margin
+        and border, but not its text-align.
+      */}
       <span
-        className={`absolute top-[3px] h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+        className={`absolute left-0 top-[3px] h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${
           checked ? 'translate-x-[23px]' : 'translate-x-[3px]'
         }`}
       />
