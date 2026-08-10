@@ -136,9 +136,16 @@ def verify_key(api_key):
         with urllib.request.urlopen(request, timeout=10) as response:
             json.load(response)
     except urllib.error.HTTPError as exc:
+        body = _body(exc)
+        # A scoped key is a valid key. This endpoint needs the user_read
+        # permission, which dictation never does, and ElevenLabs only reports a
+        # missing permission after authenticating the key — so this particular
+        # 401 proves the key works. See keycheck.js, which mirrors this.
+        if exc.code == 401 and _status_of(body) == "missing_permissions":
+            return True, "Working — valid key, scoped to its own permissions."
         if exc.code in (401, 403):
-            return False, "Key rejected by ElevenLabs."
-        return False, f"HTTP {exc.code} {_detail(exc)}".strip()
+            return False, f"Key rejected by ElevenLabs. {_detail_of(body)}".strip()
+        return False, f"HTTP {exc.code} {_detail_of(body)}".strip()
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         return False, f"ElevenLabs unreachable: {exc}"
     return True, f"Working — {MODEL_ID} ready."
@@ -177,15 +184,29 @@ def _encode_multipart(fields, filename, audio):
     return b"\r\n".join(parts), f"multipart/form-data; boundary={boundary}"
 
 
-def _detail(exc):
+def _body(exc):
+    """The JSON error body, or {} — read once, since the stream is consumable."""
     try:
-        body = json.load(exc)
+        return json.load(exc)
     except Exception:
-        return ""
+        return {}
+
+
+def _detail_of(body):
     detail = body.get("detail")
     if isinstance(detail, dict):
         return detail.get("message") or detail.get("status") or ""
     return str(detail or body.get("message") or "")
+
+
+def _status_of(body):
+    """ElevenLabs' machine-readable reason, e.g. "missing_permissions"."""
+    detail = body.get("detail")
+    return detail.get("status", "") if isinstance(detail, dict) else ""
+
+
+def _detail(exc):
+    return _detail_of(_body(exc))
 
 
 def _report(log, message):

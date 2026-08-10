@@ -49,6 +49,15 @@ function messageFrom(body) {
   }
 }
 
+/** ElevenLabs puts a machine-readable reason in detail.status. */
+function statusFrom(body) {
+  try {
+    return JSON.parse(body).detail?.status || ''
+  } catch {
+    return ''
+  }
+}
+
 async function verifyElevenlabs(key) {
   if (!key) return { ok: false, message: 'No API key set.' }
   const { status, body } = await probe({
@@ -57,7 +66,23 @@ async function verifyElevenlabs(key) {
     headers: { 'xi-api-key': key },
   })
   if (status === 200) return { ok: true, message: 'Working — scribe_v2 ready.' }
-  if (status === 401 || status === 403) return { ok: false, message: 'Key rejected by ElevenLabs.' }
+  // A scoped key is a valid key.
+  //
+  // This probe reads the account profile, which needs the user_read
+  // permission — and dictation never does. ElevenLabs only reports a missing
+  // permission *after* it has authenticated the key, so this 401 is proof the
+  // key is good rather than evidence it is bad. Restricting a key to just
+  // Speech to Text is the careful way to configure one, and reporting that as
+  // "rejected" told exactly the users who did the right thing that their
+  // working key was broken.
+  if (status === 401 && statusFrom(body) === 'missing_permissions') {
+    return { ok: true, message: 'Working — valid key, scoped to its own permissions.' }
+  }
+  // Surface what the API said rather than collapsing every 401 to one string:
+  // the reason is the whole value of pressing Test.
+  if (status === 401 || status === 403) {
+    return { ok: false, message: `Key rejected by ElevenLabs. ${messageFrom(body)}`.trim() }
+  }
   if (status === 0) return { ok: false, message: `ElevenLabs unreachable: ${body}` }
   return { ok: false, message: `HTTP ${status} ${messageFrom(body)}`.trim() }
 }
