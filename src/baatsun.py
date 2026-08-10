@@ -88,11 +88,21 @@ state = {
     "started": None,    # monotonic clock at the start, for the recorded duration
 }
 hotkey_state = {
-    "pressed": set(),     # keycodes currently held, across all keyboards
+    "pressed": {},        # device path -> keycodes currently held on it
     "held": False,        # whether the ctrl+meta combo is currently active
     "press_time": 0.0,    # monotonic time the combo was last formed (hybrid)
     "latched": False,     # hybrid: a tap left this recording running
 }
+
+# Keyboards are found by scanning /dev/input, and that scan used to run once at
+# startup. Anything plugged in later was invisible, and unplugging a keyboard
+# killed its watcher for good — so after one unplug/replug the hotkey quietly
+# worked on the built-in keyboard only. Rescanning on a short interval picks up
+# both cases. Unplugging also renumbers the event node, so watchers are tracked
+# by path rather than by device.
+DEVICE_SCAN_SECONDS = 2.0
+watched_lock = threading.Lock()
+watched_paths = set()
 
 # Hybrid mode's dividing line between a tap and a hold. Below it, releasing the
 # chord leaves the recording running until the next press; above it, the release
@@ -463,9 +473,11 @@ def handle_toggle():
             return "started"
 
 
-def find_keyboard_devices():
+def find_keyboard_devices(skip=()):
     devices = []
     for path in list_devices():
+        if path in skip:
+            continue
         try:
             dev = InputDevice(path)
         except OSError:
@@ -473,28 +485,68 @@ def find_keyboard_devices():
         caps = dev.capabilities().get(ecodes.EV_KEY, [])
         if ecodes.KEY_A in caps and ecodes.KEY_LEFTCTRL in caps:
             devices.append(dev)
+        else:
+            # Every mouse, lid switch and power button gets opened by this
+            # scan, and the scan now repeats forever. Closing the ones we don't
+            # want keeps the daemon from running itself out of file
+            # descriptors.
+            close_device(dev)
     return devices
 
 
-def on_key_event(code, value):
+def close_device(dev):
+    try:
+        dev.close()
+    except OSError:
+        pass
+
+
+def refresh_chord():
+    """Re-check whether the chord is held and fire the edge. Callers hold state_lock.
+
+    Keys are tracked per keyboard but tested as one pool, so half a chord on
+    the laptop keyboard and half on an external one still counts.
+    """
+    held = set()
+    for keys in hotkey_state["pressed"].values():
+        held |= keys
+
+    now_held = bool(held & PRIMARY_KEYS) and bool(held & SECONDARY_KEYS)
+    if now_held and not hotkey_state["held"]:
+        hotkey_state["held"] = True
+        hotkey_state["press_time"] = time.monotonic()
+        on_hotkey_press()
+    elif not now_held and hotkey_state["held"]:
+        hotkey_state["held"] = False
+        on_hotkey_release()
+
+
+def on_key_event(path, code, value):
     """value: 1=press, 0=release, 2=autorepeat (ignored)."""
     if value == 2:
         return
     with state_lock:
-        pressed = hotkey_state["pressed"]
+        pressed = hotkey_state["pressed"].setdefault(path, set())
         if value == 1:
             pressed.add(code)
         else:
             pressed.discard(code)
+        refresh_chord()
 
-        now_held = bool(pressed & PRIMARY_KEYS) and bool(pressed & SECONDARY_KEYS)
-        if now_held and not hotkey_state["held"]:
-            hotkey_state["held"] = True
-            hotkey_state["press_time"] = time.monotonic()
-            on_hotkey_press()
-        elif not now_held and hotkey_state["held"]:
-            hotkey_state["held"] = False
-            on_hotkey_release()
+
+def forget_device(path):
+    """Drop the keys a vanished keyboard was holding.
+
+    Unplug a keyboard mid-chord and its release events never arrive. Left in
+    place those phantom keys hold the chord down forever: a hold-mode recording
+    would run until the MAX_RECORDING_SECONDS backstop, and every later press
+    would do nothing because the chord never looked released. Dropping them
+    re-checks the chord, so an unplug ends a held recording the way letting go
+    would.
+    """
+    with state_lock:
+        if hotkey_state["pressed"].pop(path, None):
+            refresh_chord()
 
 
 def on_hotkey_press():
@@ -551,9 +603,35 @@ def watch_device(dev):
     try:
         for event in dev.read_loop():
             if event.type == ecodes.EV_KEY:
-                on_key_event(event.code, event.value)
+                on_key_event(dev.path, event.code, event.value)
     except OSError as e:
         log(f"lost keyboard device {dev.path}: {e}")
+    finally:
+        with watched_lock:
+            watched_paths.discard(dev.path)
+        forget_device(dev.path)
+        close_device(dev)
+
+
+def scan_keyboards():
+    """Start a watcher for every keyboard that isn't already being watched."""
+    with watched_lock:
+        skip = set(watched_paths)
+    devices = find_keyboard_devices(skip)
+    for dev in devices:
+        with watched_lock:
+            watched_paths.add(dev.path)
+        threading.Thread(target=watch_device, args=(dev,), daemon=True).start()
+    return devices
+
+
+def scan_keyboards_forever():
+    while True:
+        time.sleep(DEVICE_SCAN_SECONDS)
+        try:
+            scan_keyboards()
+        except OSError as e:
+            log(f"keyboard rescan failed: {e}")
 
 
 def start_hotkey_listener():
@@ -563,12 +641,9 @@ def start_hotkey_listener():
         "hybrid": f"(hold to talk; tap under {TAP_SECONDS}s to keep recording "
                   "until the next press)",
     }[ACTIVATION])
-    devices = find_keyboard_devices()
-    if not devices:
-        log("WARNING: no keyboard device found for hotkey listening")
-        return
-    for dev in devices:
-        threading.Thread(target=watch_device, args=(dev,), daemon=True).start()
+    if not scan_keyboards():
+        log("no keyboard found yet — still watching for one to be plugged in")
+    threading.Thread(target=scan_keyboards_forever, daemon=True).start()
 
 
 class Handler(socketserver.BaseRequestHandler):
