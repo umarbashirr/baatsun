@@ -159,7 +159,8 @@ def save_history():
     os.replace(tmp_path, HISTORY_PATH)
 
 
-def add_history_entry(text, raw=None, app=None, context=None, secs=None):
+def add_history_entry(text, raw=None, app=None, context=None, secs=None,
+                      usage=None):
     """Record a transcript, keeping the pre-cleanup text when it differed.
 
     "raw" is omitted when cleanup made no change or didn't run, so the common
@@ -187,6 +188,13 @@ def add_history_entry(text, raw=None, app=None, context=None, secs=None):
         # entries without it fall back to an estimate.
         if secs:
             entry["secs"] = round(secs, 1)
+        # What the cleanup call cost, straight from OpenAI's own count. Only
+        # present on dictations that actually made a request, so the Home page
+        # can tell a call that cost very little apart from one that never
+        # happened, and older entries — written before this was recorded — fall
+        # back to an estimate.
+        if usage:
+            entry["usage"] = usage
         next_entry_id += 1
         history.append(entry)
         del history[:-HISTORY_LIMIT]
@@ -318,7 +326,12 @@ def on_recording_timeout(wav_path):
 
 
 def maybe_clean(text, app, title):
-    """Return text polished by OpenAI, or the original if that doesn't apply.
+    """Return (text polished by OpenAI, what that cost), or the original.
+
+    The second half of the pair is the token usage OpenAI reported, or None
+    when no request was made, and it is what the Home page adds up into a spend
+    figure. It comes back even when the cleaned text was rejected, because the
+    call was still billed.
 
     Config is re-read per dictation rather than cached at startup so toggling
     cleanup in Settings takes effect immediately — the Settings panel restarts
@@ -326,23 +339,24 @@ def maybe_clean(text, app, title):
     """
     cfg = load_config()
     if not cfg.get("cleanup_enabled"):
-        return text
+        return text, None
 
     api_key = load_api_key()
     if not api_key:
         log("cleanup is on but no API key is set — typing the raw transcript")
-        return text
+        return text, None
 
     if not baatsun_context.should_clean(cfg, app, title):
         log(f"context {baatsun_context.classify(app, title)} ({app or 'unknown'}) "
             "— typing the raw transcript")
-        return text
+        return text, None
 
     # Deliberately no new state here: the pill, tray and GUI all treat an
     # unrecognised state as idle, so announcing "cleaning" would drop the pill
     # to rest and re-enable the record button while the request is still in
     # flight. Staying "transcribing" keeps the sweep running, which is what a
     # user waiting on text actually needs to see.
+    usage = {}
     cleaned = baatsun_cleanup.clean(
         text, api_key, cfg.get("cleanup_model") or "gpt-4o-mini", log=log,
         vocabulary=cfg.get("vocabulary") or "",
@@ -350,12 +364,16 @@ def maybe_clean(text, app, title):
                      and baatsun_context.allows_line_breaks(app, title)),
         hinglish=bool(cfg.get("hinglish")),
         strength=cfg.get("cleanup_strength") or "grammar",
+        usage=usage,
     )
+    # Empty when the request never got as far as an answer, which is a
+    # different thing from a call that cost nothing.
+    usage = usage or None
     if cleaned is None:
-        return text
+        return text, usage
     if cleaned != text:
         log(f"cleaned: {cleaned!r}")
-    return cleaned
+    return cleaned, usage
 
 
 def stop_recording_and_transcribe():
@@ -415,10 +433,10 @@ def stop_recording_and_transcribe():
         context = baatsun_context.classify(app, title)
 
         raw = text
-        text = maybe_clean(text, app, title)
+        text, usage = maybe_clean(text, app, title)
         subprocess.run(["ydotool", "type", "--", text], check=False)
         entry = add_history_entry(text, raw, app=app, context=context,
-                                  secs=secs)
+                                  secs=secs, usage=usage)
         broadcast({"type": "transcript", "entry": entry})
         broadcast_state("idle")
     finally:

@@ -69,6 +69,36 @@ _PROMPT_TAIL = (
 
 GRAMMAR, NATURAL = "grammar", "natural"
 
+# USD per million tokens, (input, output). Hardcoded because there is no
+# pricing endpoint to read, so this is a snapshot that will drift when OpenAI
+# changes its prices. A model that isn't listed reports no cost at all rather
+# than a guessed one — a wrong number on a spend figure is worse than a blank.
+PRICING = {
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4.1": (2.00, 8.00),
+    "gpt-4.1-mini": (0.40, 1.60),
+    "gpt-4.1-nano": (0.10, 0.40),
+}
+
+
+def cost_of(model, prompt_tokens, completion_tokens):
+    """USD for one call, or None if this model has no price on file."""
+    price = PRICING.get(model)
+    if price is None:
+        return None
+    return (prompt_tokens * price[0] + completion_tokens * price[1]) / 1_000_000
+
+
+def estimate_tokens(text):
+    """Rough token count for calls made before usage was recorded.
+
+    Four characters per token is the usual approximation for English. Only ever
+    used to put a figure on old history; anything built on it is marked as an
+    estimate in the UI, and live calls always use the counts OpenAI reports.
+    """
+    return max(1, round(len(text or "") / 4))
+
 SYSTEM_PROMPT = _PROMPT_HEAD + _PRESERVE_GRAMMAR + _PROMPT_TAIL
 
 HINGLISH_LINE = (
@@ -115,11 +145,16 @@ def build_system_prompt(vocabulary="", line_breaks=False, hinglish=False,
 
 
 def clean(text, api_key, model="gpt-4o-mini", log=None, vocabulary="",
-          line_breaks=False, hinglish=False, strength=GRAMMAR):
+          line_breaks=False, hinglish=False, strength=GRAMMAR, usage=None):
     """Return the cleaned transcript, or None if it couldn't be produced.
 
     None is not an error the caller needs to handle beyond falling back to the
     raw text — it already means "type what they actually said".
+
+    A dict passed as usage is filled in with the call's token counts and cost.
+    It is filled in as soon as OpenAI answers, before the checks below decide
+    whether the answer is usable: a response we reject still cost money, and a
+    spend figure that quietly omitted it would understate the bill.
     """
     if not text or not api_key:
         return None
@@ -154,6 +189,8 @@ def clean(text, api_key, model="gpt-4o-mini", log=None, vocabulary="",
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
             body = json.load(response)
+        if usage is not None:
+            _record_usage(usage, model, body.get("usage") or {})
         cleaned = body["choices"][0]["message"]["content"].strip()
     except urllib.error.HTTPError as exc:
         # Read the body: OpenAI puts the actionable part (bad key, quota, model
@@ -195,6 +232,17 @@ def verify_key(api_key, model="gpt-4o-mini"):
     if result is None:
         return False, "Key rejected, or OpenAI unreachable. See the daemon log."
     return True, f"Working — {model} responded."
+
+
+def _record_usage(usage, model, reported):
+    prompt = reported.get("prompt_tokens") or 0
+    completion = reported.get("completion_tokens") or 0
+    usage.update({
+        "model": model,
+        "in": prompt,
+        "out": completion,
+        "cost": cost_of(model, prompt, completion),
+    })
 
 
 def _report(log, message):

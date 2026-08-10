@@ -42,6 +42,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
+import baatsun_cleanup  # noqa: E402
 import baatsun_config  # noqa: E402
 
 SOCKET_PATH = f"/run/user/{os.getuid()}/baatsun.sock"
@@ -422,9 +423,82 @@ def compute_stats(entries):
         "today": counts.get(today, 0),
         "streak": streak,
         "cleaned": cleaned,
+        "spoken_secs": spoken_secs,
         "saved_secs": max(0.0, typing_secs - spoken_secs),
         "top_apps": sorted(per_app.items(), key=lambda kv: kv[1], reverse=True),
         "activity": [(day, counts[day]) for day in sorted(counts)],
+        **compute_spend(entries),
+    }
+
+
+def compute_spend(entries):
+    """What the OpenAI cleanup pass has cost.
+
+    Dictations carry the token counts OpenAI itself reported, but only since
+    those started being recorded. Older ones are estimated from the text on
+    each side of the call plus the system prompt — which is the bulk of the
+    input, and has to be rebuilt from the *current* settings because the ones
+    in force at the time were never stored. Estimated cost is totalled
+    separately so the UI can say how much of the figure is inferred rather than
+    billed.
+
+    The estimate is a floor. A cleanup call that changed nothing left no trace
+    in history at all, because the pre-cleanup text is only kept when it
+    differs, so those old calls can't be counted. Entries written from now on
+    carry their usage whether or not the text changed.
+    """
+    cfg = baatsun_config.load_config()
+    model = cfg.get("cleanup_model") or baatsun_config.DEFAULT_CLEANUP_MODEL
+    system_tokens = baatsun_cleanup.estimate_tokens(
+        baatsun_cleanup.build_system_prompt(
+            cfg.get("vocabulary") or "",
+            line_breaks=bool(cfg.get("line_breaks", True)),
+            hinglish=bool(cfg.get("hinglish")),
+            strength=cfg.get("cleanup_strength") or baatsun_cleanup.GRAMMAR))
+    month_start = datetime.now().replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
+
+    total = estimated = month = 0.0
+    calls = tokens_in = tokens_out = 0
+    unpriced = False
+
+    for entry in entries:
+        usage = entry.get("usage")
+        if usage:
+            cost = usage.get("cost")
+            went_in = usage.get("in") or 0
+            came_out = usage.get("out") or 0
+            inferred = False
+        elif entry.get("raw"):
+            went_in = system_tokens + baatsun_cleanup.estimate_tokens(entry["raw"])
+            came_out = baatsun_cleanup.estimate_tokens(entry.get("text"))
+            cost = baatsun_cleanup.cost_of(model, went_in, came_out)
+            inferred = True
+        else:
+            continue
+
+        calls += 1
+        tokens_in += went_in
+        tokens_out += came_out
+        # A model with no price on file. It still made a call and still spent
+        # tokens, both of which are counted; only its cost is unknown.
+        if cost is None:
+            unpriced = True
+            continue
+        total += cost
+        if inferred:
+            estimated += cost
+        if (entry.get("ts") or 0) >= month_start:
+            month += cost
+
+    return {
+        "spend_total": total,
+        "spend_estimated": estimated,
+        "spend_month": month,
+        "spend_calls": calls,
+        "spend_unpriced": unpriced,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
     }
 
 
@@ -434,6 +508,51 @@ def human_duration(seconds):
         return f"{minutes}m"
     hours, minutes = divmod(minutes, 60)
     return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+
+
+def describe_spend(stats):
+    """The tooltip behind the spend tile: what the figure covers, and how much
+    of it is inferred rather than billed."""
+    calls = stats["spend_calls"]
+    if not calls:
+        return ("Nothing spent yet. Only the optional cleanup pass costs "
+                "anything — transcription runs on this machine and is free.")
+
+    parts = [
+        f"{calls} cleanup call{'' if calls == 1 else 's'} to OpenAI: "
+        f"{human_count(stats['tokens_in'])} tokens in, "
+        f"{human_count(stats['tokens_out'])} out.\n"
+        f"{human_money(stats['spend_month'])} of it this month.",
+    ]
+    if stats["spend_estimated"]:
+        parts.append(
+            f"About {human_money(stats['spend_estimated'])} of the total is "
+            "estimated from the stored text — those dictations were cleaned up "
+            "before token usage was recorded, and a cleanup that changed "
+            "nothing left no trace to count at all, so treat the figure as a "
+            "floor. Newer dictations use the counts OpenAI reports.")
+    if stats["spend_unpriced"]:
+        parts.append("Some calls used a model with no price on file. Their "
+                     "tokens are counted, but their cost isn't.")
+    return "\n\n".join(parts)
+
+
+def human_money(amount):
+    """Dollars, at whatever precision keeps a real cost from reading as zero.
+
+    Cleanup costs a small fraction of a cent per dictation, so two decimal
+    places would show "$0.00" for months of use and make the feature look
+    broken. The number of places shrinks as the amount grows.
+    """
+    if amount <= 0:
+        return "$0"
+    if amount < 0.01:
+        return f"${amount:.4f}"
+    if amount < 1:
+        return f"${amount:.3f}"
+    if amount < 100:
+        return f"${amount:.2f}"
+    return f"${round(amount):,}"
 
 
 def human_count(value):
@@ -578,7 +697,6 @@ class HomePage(Adw.Bin):
         page.add(quote_group)
 
         stats_group = Adw.PreferencesGroup(title="At a glance")
-        tiles = Gtk.Box(spacing=12, homogeneous=True)
         self.tile_total = StatTile("Dictations")
         self.tile_words = StatTile("Words dictated")
         self.tile_saved = StatTile(
@@ -588,10 +706,22 @@ class HomePage(Adw.Bin):
             f"open. Older entries have no recorded duration and are estimated "
             f"at {SPEAKING_WPM} wpm of speech.")
         self.tile_streak = StatTile("Day streak")
-        for tile in (self.tile_total, self.tile_words, self.tile_saved,
-                     self.tile_streak):
-            tiles.append(tile)
-        stats_group.add(tiles)
+        self.tile_spoken = StatTile(
+            "Time spoken",
+            f"How long the microphone has been open across every dictation. "
+            f"Older entries have no recorded duration and are estimated at "
+            f"{SPEAKING_WPM} wpm of speech.")
+        self.tile_spend = StatTile("OpenAI spend")
+        # Six across is too narrow to read on a half-width window, so they wrap
+        # into two rows of three rather than one row that squeezes.
+        rows = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        for group in ((self.tile_total, self.tile_words, self.tile_saved),
+                      (self.tile_streak, self.tile_spoken, self.tile_spend)):
+            row = Gtk.Box(spacing=12, homogeneous=True)
+            for tile in group:
+                row.append(tile)
+            rows.append(row)
+        stats_group.add(rows)
         page.add(stats_group)
 
         chart_group = Adw.PreferencesGroup(
@@ -671,6 +801,9 @@ class HomePage(Adw.Bin):
         self.tile_words.set_value(human_count(stats["words"]))
         self.tile_saved.set_value(human_duration(stats["saved_secs"]))
         self.tile_streak.set_value(str(stats["streak"]))
+        self.tile_spoken.set_value(human_duration(stats["spoken_secs"]))
+        self.tile_spend.set_value(human_money(stats["spend_total"]))
+        self.tile_spend.set_tooltip_text(describe_spend(stats))
         self.chart.set_days(stats["activity"])
         self._fill_table(stats["activity"])
 

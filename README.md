@@ -30,7 +30,8 @@ only.
   be ended with the mouse.
 - **A real app window** — five pages behind a sidebar: Home (a greeting, a
   quote, and what you've actually been doing — dictations, words, time saved,
-  streak, and a 14-day chart), Dictate (live state, level meter, and which
+  streak, time spoken, what the cleanup pass has cost you at OpenAI, and a
+  14-day chart), Dictate (live state, level meter, and which
   window the next transcript will land in), History (grouped by day,
   searchable, filterable), Words (the vocabulary whisper is biased toward),
   and Settings. Plus a tray icon for live state at a glance.
@@ -127,13 +128,17 @@ src/baatsun_gui.py (GTK4 + libadwaita, system Python — needs PyGObject)
    The app window: an Adw.NavigationSplitView with five pages, collapsing to
    one pane below 680px.
      Home      what the app opens on. A time-of-day greeting, a rotating
-               quote, four stat tiles (dictations, words, estimated time
-               saved, day streak) and a 14-day activity chart. All of it is
-               computed from the history the daemon already keeps — nothing
-               extra is stored for it. "Time saved" measures the words against
-               40 wpm of typing, less the time the microphone was actually
-               open, and says so in a tooltip rather than pretending to be
-               precise. The chart is one series in the theme's own accent, so
+               quote, six stat tiles (dictations, words, estimated time saved,
+               day streak, time spoken, OpenAI spend) and a 14-day activity
+               chart. All of it is computed from the history the daemon already
+               keeps — nothing extra is stored for it. "Time saved" measures
+               the words against 40 wpm of typing, less the time the microphone
+               was actually open, and says so in a tooltip rather than
+               pretending to be precise. "OpenAI spend" totals what the cleanup
+               pass has cost, from the token counts OpenAI reports on each
+               call; dictations cleaned up before those were recorded are
+               estimated from their stored text, and the tooltip says how much
+               of the figure that is. The chart is one series in the accent, so
                light and dark are each chosen by libadwaita; only the busiest
                bar is labelled, and a "Show as a list" expander carries every
                value for anyone not using a mouse.
