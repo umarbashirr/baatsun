@@ -49,7 +49,9 @@ function Icon({ name, className = 'h-[18px] w-[18px]' }) {
  * bars saying different things.
  */
 function TitleBar({ title, state, connected }) {
-  const recording = state.state === 'recording'
+  // "listening" is the name the daemon broadcasts; see the note on COPY in
+  // pages/Dictate.jsx.
+  const recording = state.state === 'listening'
   const transcribing = state.state === 'transcribing'
 
   return (

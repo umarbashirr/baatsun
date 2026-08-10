@@ -2,9 +2,14 @@ import React, { useEffect, useState } from 'react'
 import { Card, Button, Badge, Section } from '../components/ui.jsx'
 import { prettyApp } from '../lib/stats.js'
 
+// Keyed by the state names the daemon actually broadcasts — "listening", not
+// "recording" (see broadcast_state in baatsun.py, and the same three names in
+// the pill, the tray and the GNOME extension). Getting this wrong is silent:
+// an unrecognised state falls through to COPY.idle, so the page just claims to
+// be ready for the whole time it is recording.
 const COPY = {
   idle: { title: 'Ready', body: 'Hold your hotkey anywhere and speak.' },
-  recording: { title: 'Listening', body: 'Let go of the hotkey when you are done.' },
+  listening: { title: 'Listening', body: 'Let go of the hotkey when you are done.' },
   transcribing: { title: 'Transcribing', body: 'Turning what you said into text…' },
 }
 
@@ -22,7 +27,7 @@ const REASONS = {
  * the state is legible from across a desk.
  */
 function Orb({ state, onToggle }) {
-  const recording = state === 'recording'
+  const recording = state === 'listening'
   const transcribing = state === 'transcribing'
 
   return (
@@ -123,13 +128,13 @@ export default function Dictate({ daemon }) {
         {error && <p className="mt-3 text-[12.5px] text-live-500">{error}</p>}
 
         <Button
-          variant={current === 'recording' ? 'danger' : 'default'}
+          variant={current === 'listening' ? 'danger' : 'default'}
           size="md"
           className="mt-5"
           onClick={toggle}
           disabled={busy || current === 'transcribing' || !daemon.connected}
         >
-          {current === 'recording' ? 'Stop and transcribe' : 'Start dictating'}
+          {current === 'listening' ? 'Stop and transcribe' : 'Start dictating'}
         </Button>
       </div>
 

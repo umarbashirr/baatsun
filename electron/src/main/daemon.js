@@ -99,8 +99,18 @@ function subscribe(onEvent, onStatus) {
       }
     })
 
+    // Once per socket, not once per event. A failed connection emits "error"
+    // and then "close", and both land here — so without this latch each dead
+    // socket schedules two reconnects while `timer` only remembers one. Both
+    // fire, each of those doubles again, and a daemon that is down for a few
+    // seconds (which is exactly what the Settings page causes when it restarts
+    // the service) leaves thousands of live sockets, pending timers and
+    // daemon:status messages behind. Growth is exponential, so it goes from
+    // invisible to fd exhaustion in about the time a restart takes.
+    let retried = false
     const retry = () => {
-      if (stopped) return
+      if (stopped || retried) return
+      retried = true
       onStatus({ connected: false })
       socket = null
       timer = setTimeout(connect, RECONNECT_DELAY)
