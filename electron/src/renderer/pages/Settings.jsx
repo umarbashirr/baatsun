@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Card, Button, Field, Select, Toggle, TextInput, Section, Badge } from '../components/ui.jsx'
+import { useTimer } from '../lib/useTimer.js'
 
 // Changing any of these means the daemon has to come back up: they are read
 // once at startup, and stt_backend in particular decides whether the local
@@ -92,6 +93,9 @@ export default function Settings() {
   const [sttKey, setSttKey] = useState('')
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
+  // Both toast sites share one timer, so a restart toast can't be cleared
+  // early by a save toast's leftover timeout.
+  const clearToastLater = useTimer()
 
   useEffect(() => {
     window.baatsun.loadConfig().then((payload) => {
@@ -134,7 +138,7 @@ export default function Settings() {
       setToast(`Could not save: ${err.message}`)
     } finally {
       setSaving(false)
-      setTimeout(() => setToast(''), 4000)
+      clearToastLater(() => setToast(''), 4000)
     }
   }
 
@@ -328,7 +332,7 @@ export default function Settings() {
                 } catch (err) {
                   setToast(err.message)
                 }
-                setTimeout(() => setToast(''), 4000)
+                clearToastLater(() => setToast(''), 4000)
               }}
             >
               Restart

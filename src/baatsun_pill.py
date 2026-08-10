@@ -170,6 +170,8 @@ class Pill(Gtk.DrawingArea):
         self._spinner_alpha = 0.0
         self._spin = 0.0
         self._last_frame = None
+        # Forces one repaint on the next frame; see set_state and _tick.
+        self._dirty = True
 
         self.add_tick_callback(self._tick)
 
@@ -178,6 +180,11 @@ class Pill(Gtk.DrawingArea):
             return
         self.state = state
         self._phase_start = time.monotonic()
+        # offline <-> idle changes the fill colour but nothing that _tick can
+        # detect as motion — both are closed with both contents faded out — so
+        # without this the pill would keep its old styling until something else
+        # happened to move.
+        self._dirty = True
         # Re-roll immediately rather than at each bar's own next deadline, so
         # the meter starts moving on the frame the state lands.
         for bar in self._bars:
@@ -194,10 +201,12 @@ class Pill(Gtk.DrawingArea):
         transcribing = self.state == "transcribing"
         open_ = listening or transcribing
 
+        target_width = ACTIVE_WIDTH if open_ else REST_WIDTH
+        target_height = ACTIVE_HEIGHT if open_ else REST_HEIGHT
+
         morph = 1.0 - math.exp(-dt * MORPH_RATE)
-        self._width += ((ACTIVE_WIDTH if open_ else REST_WIDTH) - self._width) * morph
-        self._height += (
-            (ACTIVE_HEIGHT if open_ else REST_HEIGHT) - self._height) * morph
+        self._width += (target_width - self._width) * morph
+        self._height += (target_height - self._height) * morph
 
         fade = 1.0 - math.exp(-dt * FADE_RATE)
         self._bars_alpha += ((1.0 if listening else 0.0) - self._bars_alpha) * fade
@@ -211,7 +220,30 @@ class Pill(Gtk.DrawingArea):
             bar.target = self._bar_target(i, elapsed) if listening else BAR_MIN_HEIGHT
             bar.height += (bar.target - bar.height) * approach
 
-        self.queue_draw()
+        # Repaint only while something is actually moving.
+        #
+        # This callback runs on every frame for as long as the widget is
+        # mapped, so an unconditional queue_draw() here meant redrawing the
+        # pill 60 times a second for the entire life of the session — and when
+        # not offline, each of those redraws strokes the eight concentric
+        # rounded rects that stand in for a drop shadow. For a 6px bar that is
+        # not changing. Idle is the state this thing is in almost all the time,
+        # and it is the one that should cost nothing.
+        #
+        # The thresholds are below what a repaint could show: the geometry is
+        # sub-pixel by then, and both alphas are under the 0.01 the draw path
+        # already treats as invisible.
+        moving = (
+            listening
+            or transcribing
+            or abs(target_width - self._width) > 0.05
+            or abs(target_height - self._height) > 0.05
+            or self._bars_alpha > 0.004
+            or self._spinner_alpha > 0.004
+        )
+        if moving or self._dirty:
+            self._dirty = False
+            self.queue_draw()
         return GLib.SOURCE_CONTINUE
 
     def _bar_target(self, index, elapsed):
@@ -331,9 +363,13 @@ class StateListener:
 
     def _loop(self):
         while True:
+            # ValueError as well as OSError: this thread is the only thing
+            # keeping the pill in sync, and nothing restarts it. Letting an
+            # exception escape here leaves the pill frozen on whatever it was
+            # last showing, with no reconnect and nothing in the log.
             try:
                 self._listen_once()
-            except OSError:
+            except (OSError, ValueError):
                 pass
             GLib.idle_add(self.pill.set_state, "offline")
             time.sleep(RECONNECT_INTERVAL)
@@ -351,8 +387,15 @@ class StateListener:
                 buf += chunk
                 while b"\n" in buf:
                     line, buf = buf.split(b"\n", 1)
-                    if line:
-                        self._handle_event(json.loads(line))
+                    if not line:
+                        continue
+                    # A malformed line is not worth dropping the stream over —
+                    # the same call the GNOME extension makes.
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue
+                    self._handle_event(event)
 
     def _handle_event(self, event):
         if event.get("type") != "state":

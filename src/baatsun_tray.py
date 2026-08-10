@@ -110,9 +110,12 @@ class TrayListener:
         import time
 
         while True:
+            # ValueError as well as OSError: nothing restarts this thread, so
+            # an exception escaping here freezes the tray icon on whatever it
+            # was last showing for the rest of the session.
             try:
                 self._connect_and_listen_once()
-            except OSError:
+            except (OSError, ValueError):
                 pass
             GLib.idle_add(self.indicator.set_icon_full, ICON_OFFLINE, "baatsun (offline)")
             time.sleep(3)
@@ -130,8 +133,14 @@ class TrayListener:
                 buf += chunk
                 while b"\n" in buf:
                     line, buf = buf.split(b"\n", 1)
-                    if line:
-                        self._handle_event(json.loads(line))
+                    if not line:
+                        continue
+                    # A malformed line is not worth dropping the stream over.
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue
+                    self._handle_event(event)
 
     def _handle_event(self, event):
         if event.get("type") != "state":

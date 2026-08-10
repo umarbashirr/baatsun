@@ -2,6 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 const api = window.baatsun
 
+// HISTORY_LIMIT in baatsun.py. The daemon trims to this on every write, so a
+// window that appended transcripts forever would drift past what the daemon
+// actually holds and keep entries alive that no longer exist anywhere else.
+const HISTORY_LIMIT = 500
+
 /**
  * The single source of live truth for the window.
  *
@@ -60,8 +65,9 @@ export function useDaemon() {
           break
         case 'transcript':
           // Newest last, matching the daemon's own ordering; the pages that
-          // want newest-first reverse at render time.
-          setEntries((prev) => [...prev, event.entry])
+          // want newest-first reverse at render time. Trimmed to the same
+          // limit the daemon keeps, so a long-lived window stays in step.
+          setEntries((prev) => [...prev, event.entry].slice(-HISTORY_LIMIT))
           break
         case 'deleted':
           setEntries((prev) => prev.filter((e) => e.id !== event.id))

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Card, Button, Empty, TextInput } from '../components/ui.jsx'
+import { useTimer } from '../lib/useTimer.js'
 
 /**
  * The vocabulary list, stored as the one comma-separated string the daemon
@@ -23,6 +24,7 @@ export default function Words() {
   const [draft, setDraft] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
+  const clearSavingLater = useTimer()
 
   useEffect(() => {
     window.baatsun
@@ -39,7 +41,7 @@ export default function Words() {
       await window.baatsun.saveConfig({ config: { vocabulary: toField(next) } })
     } finally {
       // Brief, but it is the only confirmation that a chip edit reached disk.
-      setTimeout(() => setSaving(false), 500)
+      clearSavingLater(() => setSaving(false), 500)
     }
   }
 

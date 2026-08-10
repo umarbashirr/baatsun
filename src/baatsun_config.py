@@ -218,6 +218,48 @@ def safe_index(choices, value, default_index=0):
         return default_index
 
 
+# The parsed config file, kept only as long as the file itself is unchanged.
+# Deliberately caches the *stored* dict rather than the merged result, so
+# load_config() still builds a fresh dict per call and a caller that mutates
+# what it got back cannot poison this.
+_cache = {"key": None, "stored": None}
+
+
+def _read_stored():
+    """The parsed config file, re-read only when it has actually changed.
+
+    load_config() is called far more often than the file changes: once per
+    dictation, and once per focus change to classify the focused window — and
+    the GNOME extension reports a focus change on every window *title* change,
+    which in a browser is every keystroke in the address bar. A stat is enough
+    to know whether the read and the parse are needed at all.
+
+    Only ever raced by threads reading the same file, and the worst outcome of
+    a race is a redundant read, so no lock.
+    """
+    try:
+        st = os.stat(CONFIG_PATH)
+    except OSError:
+        _cache["key"] = None
+        _cache["stored"] = None
+        return None
+
+    # Size and inode alongside mtime, so a restore that puts back an older file
+    # with a preserved timestamp is still noticed.
+    key = (st.st_mtime_ns, st.st_size, st.st_ino)
+    if key == _cache["key"]:
+        return _cache["stored"]
+
+    try:
+        with open(CONFIG_PATH) as f:
+            stored = json.load(f)
+    except (OSError, ValueError):
+        stored = None
+    _cache["key"] = key
+    _cache["stored"] = stored
+    return stored
+
+
 def load_config():
     """Read the config file over the defaults, dropping keys we no longer use.
 
@@ -228,11 +270,7 @@ def load_config():
     is only ever set by someone who meant to set it.
     """
     cfg = dict(DEFAULT_CONFIG)
-    try:
-        with open(CONFIG_PATH) as f:
-            stored = json.load(f)
-    except (FileNotFoundError, ValueError):
-        return cfg
+    stored = _read_stored()
     if isinstance(stored, dict):
         cfg.update({k: v for k, v in stored.items() if k in DEFAULT_CONFIG})
     return cfg
@@ -244,3 +282,7 @@ def save_config(cfg):
     with open(tmp_path, "w") as f:
         json.dump(cfg, f, indent=2)
     os.replace(tmp_path, CONFIG_PATH)
+    # The stat key would catch this anyway; clearing it means a load in the
+    # same process sees the write immediately rather than depending on it.
+    _cache["key"] = None
+    _cache["stored"] = None

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { Card, Button, Badge, Empty, TextInput } from '../components/ui.jsx'
 import { groupByDay, prettyApp } from '../lib/stats.js'
+import { useTimer } from '../lib/useTimer.js'
 
 const FILTERS = [
   { id: 'all', label: 'All' },
@@ -17,11 +18,14 @@ function timeOf(ts) {
 
 function Entry({ entry, onRetype, onDelete }) {
   const [copied, setCopied] = useState(false)
+  // Rows unmount on every keystroke in the search box, so this timer outlives
+  // its component more often than not.
+  const clearLater = useTimer()
 
   const copy = async () => {
     await navigator.clipboard.writeText(entry.text || '')
     setCopied(true)
-    setTimeout(() => setCopied(false), 1400)
+    clearLater(() => setCopied(false), 1400)
   }
 
   return (
@@ -71,6 +75,7 @@ export default function History({ daemon }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
   const [confirmClear, setConfirmClear] = useState(false)
+  const resetConfirmLater = useTimer()
 
   const groups = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -117,7 +122,7 @@ export default function History({ daemon }) {
             onClick={async () => {
               if (!confirmClear) {
                 setConfirmClear(true)
-                setTimeout(() => setConfirmClear(false), 4000)
+                resetConfirmLater(() => setConfirmClear(false), 4000)
                 return
               }
               await daemon.clear()

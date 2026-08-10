@@ -104,6 +104,9 @@ const SPINNER_ARC = 1.9;    // radians of bright head, of a 2π ring
 
 const RECONNECT_INTERVAL = 3;
 
+// See _sendFocus. Well past the longest title that classifies as anything.
+const MAX_TITLE_CHARS = 512;
+
 export default class BaatsunPillExtension extends Extension {
     enable() {
         // null rather than 'offline', so the _applyState('offline') below is a
@@ -585,7 +588,12 @@ export default class BaatsunPillExtension extends Extension {
         const win = global.display.focus_window;
         this._send(`focus ${JSON.stringify({
             app: win?.get_wm_class() ?? '',
-            title: win?.get_title() ?? '',
+            // Truncated: baatsun_context matches site names and app names near
+            // the front of a title, so nothing past a few hundred characters
+            // carries any signal — and an unbounded title is the one thing in
+            // this protocol that can be long enough to arrive at the daemon in
+            // pieces.
+            title: (win?.get_title() ?? '').slice(0, MAX_TITLE_CHARS),
         })}`);
     }
 

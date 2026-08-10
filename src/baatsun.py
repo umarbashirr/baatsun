@@ -12,6 +12,7 @@ import os
 import signal
 import socket
 import socketserver
+import struct
 import subprocess
 import sys
 import tempfile
@@ -94,7 +95,19 @@ state = {
     "wav_path": None,
     "timer": None,      # MAX_RECORDING_SECONDS watchdog for the current recording
     "started": None,    # monotonic clock at the start, for the recorded duration
+    # A transcription is in flight on the finish thread. Recording and
+    # transcribing are separate phases now (see finish_recording), so
+    # "not recording" no longer means "ready to record".
+    "finishing": False,
 }
+# The thread running the current transcription, so shutdown can wait for it to
+# type what it has rather than exiting mid-dictation.
+finish_thread = None
+# How long that wait is allowed to take. Longer than the slowest path a
+# transcription can take (a 30s ElevenLabs timeout plus a 6s cleanup timeout)
+# and still well inside systemd's 90s TimeoutStopSec, so a stuck request costs
+# a slow stop rather than a SIGKILL.
+FINISH_JOIN_SECONDS = 45
 hotkey_state = {
     "pressed": {},        # device path -> keycodes currently held on it
     "held": False,        # whether the ctrl+meta combo is currently active
@@ -109,6 +122,7 @@ hotkey_state = {
 # both cases. Unplugging also renumbers the event node, so watchers are tracked
 # by path rather than by device.
 DEVICE_SCAN_SECONDS = 2.0
+DEVICE_DIR = "/dev/input"
 watched_lock = threading.Lock()
 watched_paths = set()
 
@@ -118,6 +132,12 @@ watched_paths = set()
 # tap lands well under and the shortest useful held dictation — "yes", "no", a
 # file name — lands well over.
 TAP_SECONDS = 0.4
+
+# One command per connection, and the only unbounded one is "focus" (a window
+# title). 64 KB swallows any real title in a single read; the deadline below is
+# only for the case where the stream split one anyway.
+MAX_COMMAND_BYTES = 64 * 1024
+FOCUS_READ_TIMEOUT = 0.5
 
 # Last window the GNOME Shell extension told us had focus, used to decide
 # whether a transcript is prose worth cleaning up or a coding prompt that must
@@ -145,6 +165,10 @@ next_entry_id = 1
 # newline-delimited JSON event stream. Guarded by subscribers_lock.
 subscribers_lock = threading.Lock()
 subscribers = []
+# Whole seconds, because that is what a struct timeval takes. Generous for a
+# local socket to a client that is actually reading — anything approaching this
+# means the client has stopped.
+SUBSCRIBER_SEND_TIMEOUT = 5
 
 model = None  # loaded lazily in main() before serving
 
@@ -235,6 +259,12 @@ def find_history_entry(entry_id):
 
 
 def broadcast(event):
+    # The lock stays held across the sends: sendall() is not atomic, and two
+    # broadcasts interleaving on one socket would corrupt the newline-delimited
+    # stream the clients parse. What makes that safe is SUBSCRIBER_SEND_TIMEOUT
+    # on each subscriber (see handle_subscribe) — without it a client that had
+    # stopped reading would block here forever, and since this is on the
+    # transcription path, one wedged GUI would take dictation down with it.
     payload = (json.dumps(event) + "\n").encode()
     with subscribers_lock:
         dead = []
@@ -330,7 +360,8 @@ def on_recording_timeout(wav_path):
             return
         log(f"recording hit the {MAX_RECORDING_SECONDS // 60}-minute limit — "
             "stopping and transcribing")
-        stop_recording_and_transcribe()
+        pending = stop_recording()
+    start_finishing(pending)
 
 
 def maybe_clean(text, app, title):
@@ -384,7 +415,20 @@ def maybe_clean(text, app, title):
     return cleaned, usage
 
 
-def stop_recording_and_transcribe():
+def stop_recording():
+    """Take the running recording off the state and hand back what finishes it.
+
+    Callers hold state_lock. Returns a (proc, wav_path, secs) tuple to pass to
+    finish_recording, or None when there was nothing running.
+
+    This is deliberately only the cheap half. Everything slow — waiting on
+    pw-record, the transcription itself, the cleanup request, typing the result
+    — used to run here, inside state_lock, which is the same lock every key
+    event takes. A cloud transcription holds that for up to 30 seconds and a
+    cleanup call for 6 more, and for all of it the hotkey was dead and the
+    evdev threads were parked. Splitting the phases is what lets the slow half
+    run on its own thread with nothing held.
+    """
     cancel_recording_timer()
     proc = state["proc"]
     wav_path = state["wav_path"]
@@ -393,12 +437,50 @@ def stop_recording_and_transcribe():
     state["proc"] = None
     state["wav_path"] = None
     state["started"] = None
-    # Monotonic, so a clock adjustment mid-dictation can't make this negative.
-    secs = None if started is None else time.monotonic() - started
 
     if proc is None or wav_path is None:
-        return
+        return None
 
+    # Held until finish_recording is done, so a second recording can't start on
+    # top of a transcription that is still typing. That was previously a side
+    # effect of holding state_lock across the whole thing; now it is the flag.
+    state["finishing"] = True
+    # Monotonic, so a clock adjustment mid-dictation can't make this negative.
+    secs = None if started is None else time.monotonic() - started
+    return proc, wav_path, secs
+
+
+def start_finishing(pending):
+    """Run the slow half on its own thread. Callers must NOT hold state_lock.
+
+    A thread rather than the calling thread, because the callers are the evdev
+    watchers and the socket handlers — the two things that most need to stay
+    responsive while a transcription is running.
+    """
+    global finish_thread
+    if pending is None:
+        return
+    finish_thread = threading.Thread(
+        target=finish_recording, args=(pending,), name="finish", daemon=True)
+    finish_thread.start()
+
+
+def finish_recording(pending):
+    """Transcribe, clean up, type, and record a stopped recording.
+
+    Runs with no lock held. state["finishing"] is what keeps a second
+    recording from overlapping this one, and it is cleared here whatever
+    happens — leaving it set would wedge the hotkey for good.
+    """
+    proc, wav_path, secs = pending
+    try:
+        _finish_recording(proc, wav_path, secs)
+    finally:
+        with state_lock:
+            state["finishing"] = False
+
+
+def _finish_recording(proc, wav_path, secs):
     proc.send_signal(signal.SIGINT)
     try:
         proc.wait(timeout=5)
@@ -481,8 +563,10 @@ def abandon_recording():
     /tmp. Discarding rather than transcribing is deliberate: we're on our way
     out and there'd be no window left to type into.
 
-    Takes state_lock, so a transcription already under way finishes and gets
-    typed first rather than being cut off mid-word.
+    Waits on the finish thread, so a transcription already under way finishes
+    and gets typed first rather than being cut off mid-word. That used to fall
+    out of taking state_lock, back when the transcription held it; now that it
+    runs unlocked, the wait has to be explicit.
     """
     with state_lock:
         cancel_recording_timer()
@@ -491,6 +575,13 @@ def abandon_recording():
         state["recording"] = False
         state["proc"] = None
         state["wav_path"] = None
+        thread = finish_thread
+
+    if thread is not None and thread.is_alive():
+        log("waiting for the transcription in flight to finish typing")
+        thread.join(timeout=FINISH_JOIN_SECONDS)
+        if thread.is_alive():
+            log("transcription did not finish in time — exiting anyway")
 
     if proc is not None:
         proc.send_signal(signal.SIGINT)
@@ -511,11 +602,17 @@ def abandon_recording():
 def handle_toggle():
     with state_lock:
         if state["recording"]:
-            stop_recording_and_transcribe()
-            return "stopped"
+            pending = stop_recording()
+        elif state["finishing"]:
+            # The previous dictation is still being transcribed and typed.
+            # Starting another now would race two transcripts into the same
+            # window; the caller gets told rather than silently ignored.
+            return "busy"
         else:
             start_recording()
             return "started"
+    start_finishing(pending)
+    return "stopped"
 
 
 def find_keyboard_devices(skip=()):
@@ -551,6 +648,9 @@ def refresh_chord():
 
     Keys are tracked per keyboard but tested as one pool, so half a chord on
     the laptop keyboard and half on an external one still counts.
+
+    Returns whatever the edge handler produced — a pending transcription for
+    the caller to start once it has dropped state_lock, or None.
     """
     held = set()
     for keys in hotkey_state["pressed"].values():
@@ -560,10 +660,11 @@ def refresh_chord():
     if now_held and not hotkey_state["held"]:
         hotkey_state["held"] = True
         hotkey_state["press_time"] = time.monotonic()
-        on_hotkey_press()
+        return on_hotkey_press()
     elif not now_held and hotkey_state["held"]:
         hotkey_state["held"] = False
-        on_hotkey_release()
+        return on_hotkey_release()
+    return None
 
 
 def on_key_event(path, code, value):
@@ -576,7 +677,10 @@ def on_key_event(path, code, value):
             pressed.add(code)
         else:
             pressed.discard(code)
-        refresh_chord()
+        pending = refresh_chord()
+    # Outside the lock, and on its own thread: this watcher has to get straight
+    # back to read_loop() for the next key event.
+    start_finishing(pending)
 
 
 def forget_device(path):
@@ -589,22 +693,34 @@ def forget_device(path):
     re-checks the chord, so an unplug ends a held recording the way letting go
     would.
     """
+    pending = None
     with state_lock:
         if hotkey_state["pressed"].pop(path, None):
-            refresh_chord()
+            pending = refresh_chord()
+    start_finishing(pending)
 
 
 def on_hotkey_press():
     """The chord was just formed. Callers already hold state_lock.
+
+    Returns a pending transcription for the caller to hand to
+    start_finishing() after dropping the lock, or None.
 
     Calls the start/stop pair directly rather than going through
     handle_toggle(), which takes the state_lock we are already inside —
     threading.Lock is not reentrant, so that would deadlock the keyboard thread
     and leave the hotkey dead until the daemon restarts.
     """
+    # The previous dictation is still transcribing and typing. This is where
+    # the hotkey used to simply block on state_lock; ignoring the press keeps
+    # the old behaviour ("nothing happens during transcription") without
+    # parking the keyboard thread to get it.
+    if state["finishing"]:
+        return None
+
     if ACTIVATION == "hold":
         start_recording()
-        return
+        return None
 
     # Clear the latch before deciding anything. If the MAX_RECORDING_SECONDS
     # watchdog ended a latched recording, this flag would otherwise still be
@@ -617,30 +733,35 @@ def on_hotkey_press():
     # held recording ends on its own release, so nothing is still running by
     # the time a later press arrives.
     if state["recording"]:
-        stop_recording_and_transcribe()
-    else:
-        start_recording()
+        return stop_recording()
+    start_recording()
+    return None
 
 
 def on_hotkey_release():
-    """The chord was just broken. Callers already hold state_lock."""
+    """The chord was just broken. Callers already hold state_lock.
+
+    Returns a pending transcription, or None — see on_hotkey_press.
+    """
     if ACTIVATION == "hold":
-        stop_recording_and_transcribe()
-        return
+        # Safe when nothing is running: stop_recording() returns None the
+        # moment it sees no subprocess, which is what a press swallowed by
+        # state["finishing"] leaves behind.
+        return stop_recording()
 
     # Toggle ignores releases entirely; so does hybrid once a tap has latched,
     # and when the press already stopped the recording.
     if ACTIVATION != "hybrid" or hotkey_state["latched"] or not state["recording"]:
-        return
+        return None
 
     # This is the release that decides which gesture the user made. Held long
     # enough to be deliberate, so end it here like push-to-talk. Otherwise it
     # was a tap: leave the recording up for the next press to stop.
     if time.monotonic() - hotkey_state["press_time"] >= TAP_SECONDS:
-        stop_recording_and_transcribe()
-    else:
-        hotkey_state["latched"] = True
-        log("tap — recording latched, press the hotkey again to stop")
+        return stop_recording()
+    hotkey_state["latched"] = True
+    log("tap — recording latched, press the hotkey again to stop")
+    return None
 
 
 def watch_device(dev):
@@ -671,12 +792,41 @@ def scan_keyboards():
 
 
 def scan_keyboards_forever():
+    """Rescan when /dev/input changes, rather than every tick regardless.
+
+    A scan opens every device node it isn't already watching — every mouse, lid
+    switch and power button — reads its capability map and closes it again.
+    Doing that every two seconds for the life of the daemon is pure idle cost,
+    and nothing can be plugged in or pulled out without the directory listing
+    changing. One readdir is enough to know.
+
+    The watcher count is in the comparison because a device can also stop being
+    watched without the directory changing — a read error on a node that still
+    exists ends its thread — and that has to trigger a rescan too.
+    """
+    seen_nodes = None
+    seen_count = None
     while True:
         time.sleep(DEVICE_SCAN_SECONDS)
+        try:
+            nodes = frozenset(os.listdir(DEVICE_DIR))
+        except OSError as e:
+            log(f"keyboard rescan failed: {e}")
+            seen_nodes = None
+            continue
+        with watched_lock:
+            count = len(watched_paths)
+        if nodes == seen_nodes and count == seen_count:
+            continue
         try:
             scan_keyboards()
         except OSError as e:
             log(f"keyboard rescan failed: {e}")
+            seen_nodes = None
+            continue
+        seen_nodes = nodes
+        with watched_lock:
+            seen_count = len(watched_paths)
 
 
 def start_hotkey_listener():
@@ -695,8 +845,10 @@ class Handler(socketserver.BaseRequestHandler):
     def handle(self):
         # Generous because "focus" carries a window title, which can be long;
         # every other command is a word and an integer.
-        data = self.request.recv(8192).decode("utf-8", "replace").strip()
+        data = self.request.recv(MAX_COMMAND_BYTES).decode("utf-8", "replace").strip()
         command, _, arg = data.partition(" ")
+        if command == "focus":
+            arg = self._await_focus_payload(arg)
         if command == "toggle":
             result = handle_toggle()
             self.request.sendall(result.encode())
@@ -720,6 +872,42 @@ class Handler(socketserver.BaseRequestHandler):
             self.handle_subscribe()
         else:
             self.request.sendall(b"unknown command")
+
+    def _await_focus_payload(self, arg):
+        """Wait for the rest of a focus payload that arrived in pieces.
+
+        The protocol has no terminator — every client writes a bare command and
+        then waits for the reply — so there is nothing to read *until*, and one
+        recv() is right for every command except this one. "focus" is the only
+        one whose argument is unbounded: it carries a window title, and a
+        stream socket is free to split that across reads. When it does, the
+        JSON fails to parse and the report is dropped, and this is the input
+        that decides whether a transcript gets rewritten before it is typed.
+
+        So: keep reading while what we have is not yet valid JSON. Costs a
+        round of parsing in the normal case, where the first recv already had
+        all of it, and nothing else.
+        """
+        deadline = time.monotonic() + FOCUS_READ_TIMEOUT
+        while True:
+            try:
+                json.loads(arg)
+                return arg
+            except ValueError:
+                pass
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or len(arg) >= MAX_COMMAND_BYTES:
+                return arg  # handle_focus reports bad_focus
+            try:
+                self.request.settimeout(remaining)
+                chunk = self.request.recv(MAX_COMMAND_BYTES)
+            except OSError:
+                return arg
+            finally:
+                self.request.settimeout(None)
+            if not chunk:
+                return arg
+            arg += chunk.decode("utf-8", "replace")
 
     def handle_focus(self, arg):
         """Record which window has focus, reported by the GNOME extension.
@@ -784,6 +972,20 @@ class Handler(socketserver.BaseRequestHandler):
         self.request.sendall(b"ok")
 
     def handle_subscribe(self):
+        # Bound how long a send to this client can block, because broadcast()
+        # sends to every subscriber under one lock and on the transcription
+        # path. A GUI that stops reading — hung renderer, stopped process —
+        # fills its buffer, and without this the daemon would wait on it
+        # forever.
+        #
+        # SO_SNDTIMEO rather than settimeout(): the same socket's recv() below
+        # has to stay blocking for the life of the subscription, and
+        # settimeout() would apply to both. A send that times out raises
+        # OSError, which broadcast() already handles by dropping the client.
+        self.request.setsockopt(
+            socket.SOL_SOCKET, socket.SO_SNDTIMEO,
+            struct.pack("ll", SUBSCRIBER_SEND_TIMEOUT, 0))
+
         with subscribers_lock:
             subscribers.append(self.request)
         log(f"gui subscriber connected ({len(subscribers)} total)")
