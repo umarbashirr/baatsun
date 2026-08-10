@@ -134,6 +134,7 @@ module.exports = {
   toggle: () => request('toggle'),
   status: () => request('status'),
   history: () => request('history', { expectJson: true }),
+  cost: () => request('cost', { expectJson: true }),
   clear: () => request('clear'),
   remove: (id) => request(`delete ${id}`),
   retype: (id) => request(`retype ${id}`),

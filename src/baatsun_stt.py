@@ -42,6 +42,47 @@ MAX_KEYTERMS = 1000
 MAX_KEYTERM_CHARS = 50
 MAX_KEYTERM_WORDS = 5
 
+# USD per hour of input audio, from elevenlabs.io/pricing/api (checked
+# 2026-08-10). Hardcoded for the same reason baatsun_cleanup.PRICING is: there
+# is no pricing endpoint to read, so this is a snapshot that will drift when
+# ElevenLabs changes its prices, and it is better to have one number to update
+# than a figure guessed at the call site.
+#
+# Keyterm prompting is billed on top of the base rate, and transcribe() sends
+# keyterms whenever a vocabulary is set — so most dictations from this app cost
+# the sum of the two, not the headline rate. Entity detection is the third
+# surcharge on that page; this module never requests it, so it isn't modelled.
+PRICE_PER_HOUR = 0.22
+KEYTERMS_PRICE_PER_HOUR = 0.05
+
+# Past this many keyterms, ElevenLabs applies a minimum billable duration per
+# request. It bites here because dictations are short: with a long vocabulary,
+# a four-second "yes, ship it" is billed as twenty. Nothing stops a user pasting
+# a list this long into Settings — MAX_KEYTERMS allows 1000 — so the estimate
+# models it rather than quietly reporting a fifth of the real cost.
+KEYTERMS_MINIMUM_BILLED_SECONDS = 20.0
+KEYTERMS_MINIMUM_THRESHOLD = 100
+
+
+def billed_seconds(seconds, keyterm_count=0):
+    """Audio seconds ElevenLabs will actually charge for."""
+    seconds = max(0.0, seconds or 0.0)
+    if keyterm_count > KEYTERMS_MINIMUM_THRESHOLD:
+        return max(seconds, KEYTERMS_MINIMUM_BILLED_SECONDS)
+    return seconds
+
+
+def cost_of(seconds, keyterm_count=0):
+    """USD for transcribing `seconds` of audio with `keyterm_count` keyterms.
+
+    Pro-rata on duration: the docs bill on the length of the audio sent, with
+    no general per-request minimum — the only minimum is the keyterm one above.
+    """
+    rate = PRICE_PER_HOUR
+    if keyterm_count:
+        rate += KEYTERMS_PRICE_PER_HOUR
+    return billed_seconds(seconds, keyterm_count) / 3600.0 * rate
+
 
 def parse_keyterms(vocabulary):
     """Turn the comma-separated vocabulary string into an API keyterms list.
@@ -62,7 +103,8 @@ def parse_keyterms(vocabulary):
     return terms[:MAX_KEYTERMS]
 
 
-def transcribe(wav_path, api_key, language="en", vocabulary="", log=None):
+def transcribe(wav_path, api_key, language="en", vocabulary="", log=None,
+               seconds=None, usage=None):
     """Return the transcript text, or None if it couldn't be produced.
 
     language is passed through as language_code. Pinning it rather than letting
@@ -70,6 +112,13 @@ def transcribe(wav_path, api_key, language="en", vocabulary="", log=None):
     English: Scribe v2 can code-switch Hindi/English, but it renders the Hindi
     parts *as Hindi*, which is not what the Hinglish setting asks for — that
     one wants English out, and the cleanup pass is what delivers it.
+
+    A dict passed as usage is filled in with what the call cost, from `seconds`
+    of audio. Unlike cleanup, this is a computed figure and not a reported one:
+    the endpoint returns no usage block, so the price list above is the only
+    source. It is filled in once the response parses and before the empty-text
+    check below, because audio that came back with nothing in it was still
+    transcribed and still billed.
     """
     if not api_key:
         return None
@@ -90,7 +139,8 @@ def transcribe(wav_path, api_key, language="en", vocabulary="", log=None):
     # characters", because the brackets and quotes are read as part of the
     # keyword itself. A comma-joined string is accepted but wrong for the same
     # reason — it arrives as one keyword with commas in it.
-    fields += [("keyterms", term) for term in parse_keyterms(vocabulary)]
+    keyterms = parse_keyterms(vocabulary)
+    fields += [("keyterms", term) for term in keyterms]
 
     body, content_type = _encode_multipart(fields, wav_path, audio)
     request = urllib.request.Request(
@@ -102,6 +152,8 @@ def transcribe(wav_path, api_key, language="en", vocabulary="", log=None):
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
             payload = json.load(response)
+        if usage is not None:
+            _record_usage(usage, seconds, len(keyterms))
         text = (payload.get("text") or "").strip()
     except urllib.error.HTTPError as exc:
         # Read the body: ElevenLabs puts the actionable part (bad key, quota,
@@ -182,6 +234,19 @@ def _encode_multipart(fields, filename, audio):
         b"",
     ]
     return b"\r\n".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
+def _record_usage(usage, seconds, keyterm_count):
+    # secs is stored alongside cost rather than left to the entry's own "secs"
+    # field, because that one is how long the mic was open and this one is what
+    # the bill was computed from — the keyterm minimum can make them differ.
+    usage.update({
+        "backend": "elevenlabs",
+        "model": MODEL_ID,
+        "secs": round(billed_seconds(seconds, keyterm_count), 1),
+        "keyterms": keyterm_count,
+        "cost": None if seconds is None else cost_of(seconds, keyterm_count),
+    })
 
 
 def _body(exc):

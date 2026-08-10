@@ -91,6 +91,12 @@ src/baatsun.py (background daemon, systemd --user service)
                      the app window's record button
         status     — "recording" or "idle"
         history    — one-shot JSON dump of all past transcripts
+        cost       — one-shot JSON breakdown of what ElevenLabs and OpenAI
+                     have cost, split by today/week/month/all and by vendor.
+                     Totalled from the transcripts still in history, so it
+                     reports a window rather than lifetime spend — the reply
+                     says which in its `window` block. Local transcriptions
+                     are counted at zero, not billed at cloud rates
         subscribe  — hold the connection open, stream newline-delimited
                      JSON events (state changes, new/deleted transcripts,
                      focus changes) as they happen — this is what the app

@@ -27,6 +27,7 @@ import baatsun_stt
 from baatsun_config import (
     ACTIVATION_CHOICES,
     CONFIG_PATH,
+    DEFAULT_CLEANUP_MODEL,
     WHISPER_LANGUAGE,
     cleanup_ready,
     load_api_key,
@@ -217,7 +218,7 @@ def save_history():
 
 
 def add_history_entry(text, raw=None, app=None, context=None, secs=None,
-                      usage=None):
+                      usage=None, stt=None):
     """Record a transcript, keeping the pre-cleanup text when it differed.
 
     "raw" is omitted when cleanup made no change or didn't run, so the common
@@ -252,6 +253,13 @@ def add_history_entry(text, raw=None, app=None, context=None, secs=None,
         # back to an estimate.
         if usage:
             entry["usage"] = usage
+        # Which backend transcribed this and what it cost. "local" entries carry
+        # a zero cost rather than nothing at all — see _finish_recording — so
+        # the only entries without this are the ones written before it existed,
+        # and the cost report can report those as unattributed instead of
+        # silently counting them as free.
+        if stt:
+            entry["stt"] = stt
         next_entry_id += 1
         history.append(entry)
         del history[:-HISTORY_LIMIT]
@@ -528,10 +536,16 @@ def _finish_recording(proc, wav_path, secs):
             return
 
         vocabulary = load_config().get("vocabulary") or ""
+        # Which backend transcribed this, recorded per entry rather than read
+        # from config at reporting time. The backend is a setting people flip:
+        # totalling today's history against today's setting would bill every
+        # local dictation you ever made at cloud rates the moment you switch.
+        stt_usage = {}
         if STT_BACKEND == "elevenlabs":
             text = baatsun_stt.transcribe(
                 wav_path, load_stt_api_key(),
-                language=WHISPER_LANGUAGE, vocabulary=vocabulary, log=log)
+                language=WHISPER_LANGUAGE, vocabulary=vocabulary, log=log,
+                seconds=secs, usage=stt_usage)
             if text is None:
                 keep_wav = True
                 log(f"the recording has been kept at {wav_path} — "
@@ -550,6 +564,9 @@ def _finish_recording(proc, wav_path, secs):
                 initial_prompt=vocabulary or None,
             )
             text = "".join(seg.text for seg in segments).strip()
+            # Written rather than left out, so the cost report can tell a
+            # dictation that was free apart from one whose backend is unknown.
+            stt_usage = {"backend": "local", "cost": 0.0}
 
         if not text:
             log("empty transcript")
@@ -569,7 +586,7 @@ def _finish_recording(proc, wav_path, secs):
         text, usage = maybe_clean(text, app, title)
         subprocess.run(["ydotool", "type", "--", text], check=False)
         entry = add_history_entry(text, raw, app=app, context=context,
-                                  secs=secs, usage=usage)
+                                  secs=secs, usage=usage, stt=stt_usage)
         broadcast({"type": "transcript", "entry": entry})
         broadcast_state("idle")
     finally:
@@ -886,6 +903,132 @@ def start_hotkey_listener():
     threading.Thread(target=scan_keyboards_forever, daemon=True).start()
 
 
+# Periods the cost report breaks spend down by, as (name, seconds back from
+# now). "today" is handled separately because it means local midnight, not 24
+# hours ago — "what have I spent today" is a calendar question.
+COST_PERIODS = (("week", 7 * 86400), ("month", 30 * 86400))
+
+
+def _period_bucket():
+    return {
+        "dictations": 0,
+        "elevenlabs": {"dictations": 0, "secs": 0.0, "cost": 0.0,
+                       "estimated": 0},
+        "openai": {"calls": 0, "in": 0, "out": 0, "cost": 0.0, "estimated": 0},
+        # Entries written before the backend was recorded per-entry. Counted and
+        # reported, never billed: we genuinely do not know which backend
+        # produced them, and inventing a number for them would put a wrong
+        # figure on a spend total, which is the one place a guess is worst.
+        "unattributed": 0,
+        "total": 0.0,
+    }
+
+
+def _add_entry_cost(bucket, entry):
+    bucket["dictations"] += 1
+
+    stt = entry.get("stt") or {}
+    backend = stt.get("backend")
+    if backend == "elevenlabs":
+        eleven = bucket["elevenlabs"]
+        eleven["dictations"] += 1
+        cost = stt.get("cost")
+        if not isinstance(cost, (int, float)):
+            # The call happened but its duration wasn't recorded. Fall back to
+            # the entry's own mic-open time, which is the same quantity from a
+            # less exact source, and mark the figure as estimated.
+            cost = baatsun_stt.cost_of(entry.get("secs") or 0,
+                                       stt.get("keyterms") or 0)
+            eleven["estimated"] += 1
+        eleven["secs"] += stt.get("secs") or entry.get("secs") or 0.0
+        eleven["cost"] += cost
+    elif backend != "local":
+        bucket["unattributed"] += 1
+
+    usage = entry.get("usage") or {}
+    openai = bucket["openai"]
+    cost = usage.get("cost")
+    if isinstance(cost, (int, float)):
+        openai["calls"] += 1
+        openai["in"] += usage.get("in") or 0
+        openai["out"] += usage.get("out") or 0
+        openai["cost"] += cost
+    elif entry.get("raw"):
+        # Cleanup ran (it left a pre-cleanup text behind) but predates usage
+        # being recorded. Estimated the same way the Home page does it, so the
+        # two never disagree — see electron/src/renderer/lib/stats.js.
+        model = load_config().get("cleanup_model") or DEFAULT_CLEANUP_MODEL
+        prompt = baatsun_cleanup.estimate_tokens(entry.get("raw"))
+        completion = baatsun_cleanup.estimate_tokens(entry.get("text"))
+        openai["calls"] += 1
+        openai["in"] += prompt
+        openai["out"] += completion
+        openai["cost"] += baatsun_cleanup.cost_of(model, prompt, completion) or 0.0
+        openai["estimated"] += 1
+
+    bucket["total"] = bucket["elevenlabs"]["cost"] + bucket["openai"]["cost"]
+
+
+def compute_cost(entries, now=None):
+    """What the two APIs have cost, over the transcripts still in history.
+
+    Deliberately computed from history rather than from a separate ledger, so
+    it can never disagree with what the History page shows — but that also means
+    it reports a *window*, not a lifetime: history is capped at HISTORY_LIMIT
+    and "clear" wipes it. The window block says so explicitly rather than
+    letting a caller read the total as all-time spend.
+    """
+    now = time.time() if now is None else now
+    local = time.localtime(now)
+    midnight = time.mktime((local.tm_year, local.tm_mon, local.tm_mday,
+                            0, 0, 0, 0, 0, -1))
+
+    periods = {name: _period_bucket() for name, _ in COST_PERIODS}
+    periods["today"] = _period_bucket()
+    periods["all"] = _period_bucket()
+
+    timestamps = []
+    for entry in entries:
+        _add_entry_cost(periods["all"], entry)
+        ts = entry.get("ts")
+        if not isinstance(ts, (int, float)):
+            continue
+        timestamps.append(ts)
+        if ts >= midnight:
+            _add_entry_cost(periods["today"], entry)
+        for name, window in COST_PERIODS:
+            if ts >= now - window:
+                _add_entry_cost(periods[name], entry)
+
+    return {
+        "generated": now,
+        "window": {
+            "entries": len(entries),
+            "since": min(timestamps) if timestamps else None,
+            "limit": HISTORY_LIMIT,
+            # At the cap, the oldest dictations have already been dropped, so
+            # "all" is a floor on lifetime spend rather than the whole of it.
+            "at_limit": len(entries) >= HISTORY_LIMIT,
+        },
+        "periods": periods,
+        # Echoed so a caller never has to hardcode a second copy of the prices,
+        # and so a report carries the rates it was computed with.
+        "rates": {
+            "elevenlabs": {
+                "model": baatsun_stt.MODEL_ID,
+                "per_hour": baatsun_stt.PRICE_PER_HOUR,
+                "keyterms_per_hour": baatsun_stt.KEYTERMS_PRICE_PER_HOUR,
+            },
+            "openai": {
+                "model": load_config().get("cleanup_model")
+                or DEFAULT_CLEANUP_MODEL,
+                "per_million": baatsun_cleanup.PRICING,
+            },
+        },
+        "backend": STT_BACKEND,
+    }
+
+
 class Handler(socketserver.BaseRequestHandler):
     def handle(self):
         # Generous because "focus" carries a window title, which can be long;
@@ -902,6 +1045,14 @@ class Handler(socketserver.BaseRequestHandler):
         elif command == "history":
             with history_lock:
                 payload = json.dumps(history)
+            self.request.sendall(payload.encode() + b"\n")
+        elif command == "cost":
+            # Snapshot the list under the lock and total it outside: this walks
+            # every entry several times over, and the history lock is also held
+            # by the path that writes a finished dictation.
+            with history_lock:
+                entries = list(history)
+            payload = json.dumps(compute_cost(entries))
             self.request.sendall(payload.encode() + b"\n")
         elif command == "clear":
             clear_history()
