@@ -22,6 +22,7 @@ from evdev import InputDevice, ecodes, list_devices
 
 import baatsun_cleanup
 import baatsun_context
+import baatsun_stt
 from baatsun_config import (
     ACTIVATION_CHOICES,
     CONFIG_PATH,
@@ -29,13 +30,20 @@ from baatsun_config import (
     cleanup_ready,
     load_api_key,
     load_config,
+    load_stt_api_key,
     resolve_model,
+    resolve_stt_backend,
 )
 
 config = load_config()
 
 MODEL_SIZE = os.environ.get("BAATSUN_MODEL") or resolve_model(config)
 COMPUTE_TYPE = os.environ.get("BAATSUN_COMPUTE_TYPE") or config["compute_type"]
+# Resolved once, because it decides whether the local model is loaded at all —
+# and loading it is what costs the ~570 MB the remote backend exists to avoid.
+# The Settings panel restarts the daemon when this changes, the same way it
+# does for the model.
+STT_BACKEND = os.environ.get("BAATSUN_STT_BACKEND") or resolve_stt_backend(config)
 SOCKET_PATH = f"/run/user/{os.getuid()}/baatsun.sock"
 SAMPLE_RATE = "16000"
 
@@ -400,23 +408,41 @@ def stop_recording_and_transcribe():
 
     broadcast_state("transcribing")
 
+    # A remote transcription that fails takes the dictation with it — there is
+    # no raw text to fall back on, the way a failed cleanup still has the
+    # transcript. Keeping the wav turns that from "what you said is gone" into
+    # "what you said is on disk", which is the difference between an annoyance
+    # and a reason to distrust the tool.
+    keep_wav = False
     try:
         if os.path.getsize(wav_path) < 1024:
             log("recording too short, skipping")
             broadcast_state("idle", reason="too_short")
             return
 
-        # initial_prompt biases the decoder toward names it would otherwise
-        # mangle ("Claude" heard as "cloud"). Cheaper and far more reliable
-        # than asking the cleanup model to spot the mistake afterwards, and it
-        # works even with cleanup switched off.
-        segments, _info = model.transcribe(
-            wav_path,
-            language=WHISPER_LANGUAGE,
-            beam_size=1,
-            initial_prompt=load_config().get("vocabulary") or None,
-        )
-        text = "".join(seg.text for seg in segments).strip()
+        vocabulary = load_config().get("vocabulary") or ""
+        if STT_BACKEND == "elevenlabs":
+            text = baatsun_stt.transcribe(
+                wav_path, load_stt_api_key(),
+                language=WHISPER_LANGUAGE, vocabulary=vocabulary, log=log)
+            if text is None:
+                keep_wav = True
+                log(f"the recording has been kept at {wav_path} — "
+                    "dictate again, or transcribe it by hand")
+                broadcast_state("idle", reason="failed")
+                return
+        else:
+            # initial_prompt biases the decoder toward names it would otherwise
+            # mangle ("Claude" heard as "cloud"). Cheaper and far more reliable
+            # than asking the cleanup model to spot the mistake afterwards, and
+            # it works even with cleanup switched off.
+            segments, _info = model.transcribe(
+                wav_path,
+                language=WHISPER_LANGUAGE,
+                beam_size=1,
+                initial_prompt=vocabulary or None,
+            )
+            text = "".join(seg.text for seg in segments).strip()
 
         if not text:
             log("empty transcript")
@@ -440,10 +466,11 @@ def stop_recording_and_transcribe():
         broadcast({"type": "transcript", "entry": entry})
         broadcast_state("idle")
     finally:
-        try:
-            os.remove(wav_path)
-        except OSError:
-            pass
+        if not keep_wav:
+            try:
+                os.remove(wav_path)
+            except OSError:
+                pass
 
 
 def abandon_recording():
@@ -793,7 +820,6 @@ class Server(socketserver.ThreadingUnixStreamServer):
 
 def main():
     global model
-    from faster_whisper import WhisperModel
 
     if os.path.exists(SOCKET_PATH):
         os.remove(SOCKET_PATH)
@@ -801,20 +827,33 @@ def main():
     load_history()
     log(f"loaded {len(history)} history entries from {HISTORY_PATH}")
 
-    # faster-whisper fetches the model into ~/.cache/huggingface on first use;
-    # after that this is a local load.
-    log(f"loading model {MODEL_SIZE} ({COMPUTE_TYPE}, cpu)...")
-    try:
-        model = WhisperModel(MODEL_SIZE, device="cpu", compute_type=COMPUTE_TYPE)
-    except Exception as exc:
-        # Starting anyway would leave a daemon whose hotkey silently does
-        # nothing. Exit instead, with the reason on one readable line above
-        # the traceback; systemd retries and gives up at its start limit.
-        log(f"could not load the dictation model {MODEL_SIZE}: {exc}")
-        log("dictation can't run without it — check your network and restart, "
-            f"or point 'model_override' in {CONFIG_PATH} at a local model")
-        raise
-    log("model loaded")
+    if STT_BACKEND == "elevenlabs":
+        # The import is inside the branch, not just the load: faster_whisper
+        # pulls in ctranslate2 and costs ~50 MB before a single weight is read,
+        # and the whole point of this backend is not to pay for a model it
+        # will never call.
+        log("transcribing with ElevenLabs — the local model is not loaded")
+        log("your audio leaves this machine on every dictation; "
+            f"switch 'stt_backend' in {CONFIG_PATH} back to 'local' to stop that")
+    else:
+        from faster_whisper import WhisperModel
+
+        # faster-whisper fetches the model into ~/.cache/huggingface on first
+        # use; after that this is a local load.
+        log(f"loading model {MODEL_SIZE} ({COMPUTE_TYPE}, cpu)...")
+        try:
+            model = WhisperModel(MODEL_SIZE, device="cpu",
+                                 compute_type=COMPUTE_TYPE)
+        except Exception as exc:
+            # Starting anyway would leave a daemon whose hotkey silently does
+            # nothing. Exit instead, with the reason on one readable line above
+            # the traceback; systemd retries and gives up at its start limit.
+            log(f"could not load the dictation model {MODEL_SIZE}: {exc}")
+            log("dictation can't run without it — check your network and "
+                f"restart, or point 'model_override' in {CONFIG_PATH} at a "
+                "local model")
+            raise
+        log("model loaded")
 
     start_hotkey_listener()
 

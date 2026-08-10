@@ -1,0 +1,144 @@
+@import 'tailwindcss';
+
+/*
+  The palette is built around the pill: one dark object, warm accent, nothing
+  that shouts. The pill never changes colour, it opens — the window follows the
+  same idea, so state is carried by motion and weight rather than by repainting
+  large areas.
+
+  Saffron rather than the usual product-blue: Baatsun is बात + सुन, and a warm
+  accent belongs to it in a way a generic indigo does not.
+*/
+@theme {
+  --color-ink-950: #08080a;
+  --color-ink-900: #0b0b0e;
+  --color-ink-850: #101014;
+  --color-ink-800: #16161b;
+  --color-ink-750: #1c1c23;
+  --color-ink-700: #24242d;
+  --color-ink-600: #33333f;
+  --color-ink-500: #4a4a59;
+  --color-ink-400: #6b6b7c;
+  --color-ink-300: #9494a4;
+  --color-ink-200: #c3c3cf;
+  --color-ink-100: #e6e6ec;
+  --color-ink-50: #f6f6f8;
+
+  --color-saffron-400: #f5b877;
+  --color-saffron-500: #ef9f4e;
+  --color-saffron-600: #dd8532;
+
+  --color-live-500: #f2555a;
+  --color-good-500: #3ecf8e;
+
+  --font-sans: 'Inter', 'Cantarell', 'Adwaita Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Source Code Pro', ui-monospace, monospace;
+
+  --radius-card: 14px;
+}
+
+:root {
+  --bg: var(--color-ink-900);
+  --surface: var(--color-ink-850);
+  --surface-raised: var(--color-ink-800);
+  --line: var(--color-ink-700);
+  --text: var(--color-ink-100);
+  --text-dim: var(--color-ink-300);
+  --text-faint: var(--color-ink-400);
+  --accent: var(--color-saffron-500);
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  /* This is a chrome-less window; letting a stray drag select the whole UI
+     makes it feel like a web page rather than an application. */
+  user-select: none;
+  overflow: hidden;
+}
+
+/* Transcripts are the one thing people genuinely need to copy out. */
+.selectable {
+  user-select: text;
+  cursor: text;
+}
+
+/* The draggable strip of the custom title bar. Interactive children opt back
+   out with .no-drag, or they'd move the window instead of taking the click. */
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink-700);
+  border-radius: 999px;
+  border: 3px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-600);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Recording: a slow, even pulse. Fast blinking on something that can run for
+   fifteen minutes is exhausting to sit next to. */
+@keyframes pulse-live {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.88);
+  }
+}
+.animate-live {
+  animation: pulse-live 1.8s ease-in-out infinite;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-rise {
+  animation: rise 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-live,
+  .animate-rise {
+    animation: none;
+  }
+}

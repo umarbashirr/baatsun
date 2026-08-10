@@ -6,12 +6,12 @@ the "AppIndicator and KStatusNotifierItem Support" GNOME Shell extension on
 Wayland) whose glyph reflects daemon state (idle/listening/transcribing),
 plus a menu to open the history window, toggle recording, or quit the tray.
 
-This runs as a separate process from src/baatsun_gui.py deliberately: the
-appindicator library only speaks GTK3's Gtk.Menu, and a single Python
-process can't load both the GTK3 and GTK4 typelibs. "Show History" launches
-baatsun_gui.py as a subprocess; GApplication's single-instance D-Bus
-activation means that's a no-op re-present if it's already running, not a
-second window.
+This stays GTK3 while the application window is an Electron app: the
+appindicator library only speaks GTK3's Gtk.Menu, and there is no GTK4 or
+Wayland-native equivalent that every desktop implements. "Show History"
+launches the window through the baatsun-gui script; Electron's single
+instance lock means that's a no-op re-present if the window is already up,
+not a second one.
 """
 import json
 import os
@@ -33,7 +33,15 @@ except ValueError:
 from gi.repository import GLib, Gtk  # noqa: E402
 
 SOCKET_PATH = f"/run/user/{os.getuid()}/baatsun.sock"
-GUI_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "baatsun_gui.py")
+
+# The launcher rather than the app directly: it is the one place that knows
+# where the window is installed, which electron to use, and which sandbox and
+# platform flags this machine needs.
+INSTALLED_LAUNCHER = "/usr/bin/baatsun-gui"
+CHECKOUT_LAUNCHER = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", "baatsun-gui"))
+GUI_LAUNCHER = (INSTALLED_LAUNCHER if os.path.exists(INSTALLED_LAUNCHER)
+                else CHECKOUT_LAUNCHER)
 
 ICON_IDLE = "audio-input-microphone-symbolic"
 ICON_LISTENING = "media-record-symbolic"
@@ -53,7 +61,7 @@ def send_command(command):
 
 def show_history(*_args):
     subprocess.Popen(
-        [sys.executable, GUI_SCRIPT],
+        [GUI_LAUNCHER],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,

@@ -18,6 +18,16 @@ case "$1" in
 
         chmod -R a+rX /opt/baatsun
 
+        # Chromium refuses to start unsandboxed unless told to, and its setuid
+        # helper only works owned by root with the setuid bit set. Doing it here
+        # is what lets baatsun-gui run the window *with* its sandbox; without
+        # this the launcher falls back to --no-sandbox.
+        SANDBOX=/opt/baatsun/electron/node_modules/electron/dist/chrome-sandbox
+        if [ -f "$SANDBOX" ]; then
+            chown root:root "$SANDBOX"
+            chmod 4755 "$SANDBOX"
+        fi
+
         udevadm control --reload-rules >/dev/null 2>&1 || true
         udevadm trigger --name-match=uinput >/dev/null 2>&1 || true
 

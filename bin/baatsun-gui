@@ -1,12 +1,88 @@
 #!/usr/bin/env python3
-"""Launch the baatsun history window (see src/baatsun_gui.py)."""
+"""Launch the Baatsun application window (see electron/).
+
+The window is an Electron app; the daemon, the pill and the tray are not. The
+pill in particular cannot be — it needs wlr-layer-shell to sit above fullscreen
+windows without taking focus, and Chromium has no way to ask for that. So this
+launches one process and leaves the rest of the install alone.
+
+Two layouts are supported, the same pair every other script here handles:
+an installed tree under /opt/baatsun, and a git checkout being run in place.
+"""
 import os
+import shutil
+import subprocess
 import sys
 
-INSTALLED_SCRIPT = "/opt/baatsun/src/baatsun_gui.py"
+INSTALLED_APP = "/opt/baatsun/electron"
 HERE = os.path.dirname(os.path.abspath(__file__))
-CHECKOUT_SCRIPT = os.path.join(HERE, "..", "src", "baatsun_gui.py")
+CHECKOUT_APP = os.path.normpath(os.path.join(HERE, "..", "electron"))
 
-GUI_SCRIPT = INSTALLED_SCRIPT if os.path.exists(INSTALLED_SCRIPT) else CHECKOUT_SCRIPT
+APP_DIR = INSTALLED_APP if os.path.isdir(INSTALLED_APP) else CHECKOUT_APP
 
-os.execv(sys.executable, [sys.executable, GUI_SCRIPT] + sys.argv[1:])
+# Set on the window so the .desktop file's StartupWMClass matches and the
+# shell groups the window under Baatsun rather than under "Electron".
+WM_CLASS = "baatsun"
+
+
+def find_electron():
+    """The bundled electron binary, or whatever is on PATH.
+
+    Bundled first: a system electron is whatever version the distro happened to
+    package, and the app is built against the one in node_modules.
+    """
+    bundled = os.path.join(APP_DIR, "node_modules", "electron", "dist", "electron")
+    if os.path.exists(bundled):
+        return bundled
+    return shutil.which("electron")
+
+
+def main():
+    if not os.path.isdir(APP_DIR):
+        print(f"baatsun-gui: no application window found at {APP_DIR}", file=sys.stderr)
+        return 1
+
+    if not os.path.exists(os.path.join(APP_DIR, "dist", "index.html")):
+        print(
+            "baatsun-gui: the window has not been built yet. Run:\n"
+            f"  cd {APP_DIR} && npm install && npm run build",
+            file=sys.stderr,
+        )
+        return 1
+
+    electron = find_electron()
+    if not electron:
+        print(
+            "baatsun-gui: electron is not installed. Run:\n"
+            f"  cd {APP_DIR} && npm install",
+            file=sys.stderr,
+        )
+        return 1
+
+    argv = [electron, APP_DIR, f"--class={WM_CLASS}"]
+
+    # Chromium's setuid sandbox needs chrome-sandbox owned by root and mode
+    # 4755. The .deb's postinst does that; a checkout won't have it, and
+    # refusing to start is worse than starting unsandboxed for a window that
+    # loads no remote content (see the CSP in src/renderer/index.html).
+    sandbox_helper = os.path.join(
+        APP_DIR, "node_modules", "electron", "dist", "chrome-sandbox")
+    try:
+        usable = os.stat(sandbox_helper).st_uid == 0
+    except OSError:
+        usable = False
+    if not usable:
+        argv.append("--no-sandbox")
+
+    # Wayland-native where the session is Wayland, XWayland otherwise. Left to
+    # Electron rather than pinned, because pinning it breaks the other one.
+    argv.append("--ozone-platform-hint=auto")
+
+    os.environ.setdefault("BAATSUN_DEV", "0")
+    # Replace this process rather than forking: the tray and the .desktop entry
+    # both expect the thing they launched to *be* the window.
+    os.execv(electron, argv + sys.argv[1:])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -5,9 +5,10 @@
 A voice dictation tool for Linux: **hold Ctrl+Super (Windows key) anywhere**,
 speak, **release** — it transcribes locally (faster-whisper, CPU) and types
 the text into whatever window or input box is focused (via `ydotool`).
-Transcription runs fully offline; nothing you say ever leaves your machine
-unless you opt in to the OpenAI cleanup pass, which sends the transcript text
-only.
+Transcription runs fully offline by default; nothing you say ever leaves your
+machine unless you opt in — to the OpenAI cleanup pass, which sends the
+transcript text only, or to the ElevenLabs transcription backend, which sends
+the audio itself.
 
 ## Features
 
@@ -18,6 +19,13 @@ only.
 - **Offline transcription** — runs locally on CPU via
   [faster-whisper](https://github.com/SYSTRAN/faster-whisper). Your audio is
   never sent anywhere, and by default neither is the text.
+- **Or cloud transcription, if you'd rather** — an optional ElevenLabs Scribe v2
+  backend, off unless you turn it on. It is more accurate (~2.2% word error rate
+  against `small.en`'s ~6–9%) and skips loading the local model entirely, which
+  frees about 690 MB of RAM. In exchange it needs the network on every
+  dictation, costs roughly $0.27 per hour of speech, and sends your audio to
+  ElevenLabs. Your vocabulary list is passed along as keyterms, so the names it
+  gets right locally it gets right there too.
 - **Works anywhere** — types directly into whatever window has focus, so it
   works in any app, not just ones with dictation support built in.
 - **No shortcut registration needed** — reads the keyboard directly below the
@@ -51,8 +59,9 @@ only.
 - Python 3.10+.
 - [`ydotool`](https://github.com/ouija/ydotool) for typing into the focused
   window (works under both X11 and Wayland).
-- GTK4 + libadwaita and PyGObject for the app window; GTK3 + AppIndicator
-  bindings for the tray icon (optional — see below).
+- Node.js 20+ and npm, to build the app window (Electron + React).
+- PyGObject and GTK3 + AppIndicator bindings for the tray icon (optional —
+  see below).
 - For the pill: on GNOME, the bundled GNOME Shell extension (no extra
   packages); elsewhere, [gtk4-layer-shell](https://github.com/wmww/gtk4-layer-shell)
   (optional — see below).
@@ -79,13 +88,13 @@ src/baatsun.py (background daemon, systemd --user service)
    │
    └─ unix socket at /run/user/$UID/baatsun.sock, multiple commands:
         toggle     — start/stop recording, sent by bin/baatsun-toggle and
-                     baatsun_gui.py's record button
+                     the app window's record button
         status     — "recording" or "idle"
         history    — one-shot JSON dump of all past transcripts
         subscribe  — hold the connection open, stream newline-delimited
                      JSON events (state changes, new/deleted transcripts,
-                     focus changes) as they happen — this is what the
-                     GUI/tray/pill use. The stream opens with the current
+                     focus changes) as they happen — this is what the app
+                     window, tray and pill use. The stream opens with the current
                      state and focus, so a client that connects mid-dictation
                      is right immediately instead of at the next change
         clear      — wipe all transcript history
@@ -98,15 +107,16 @@ src/baatsun.py (background daemon, systemd --user service)
                      up or typed verbatim, and is re-broadcast to subscribers
                      as a `focus` event so the app window can show it
 
-src/baatsun_config.py (stdlib only — shared by both Python interpreters below)
+src/baatsun_config.py (stdlib only — shared by the daemon and the tray)
    Reads/writes ~/.config/baatsun/config.json: model override, compute type,
    hotkey combo. baatsun.py reads it at startup (env vars still override, for
-   anyone pinning values in systemd/baatsun.service); baatsun_gui.py's Settings
-   panel writes the hotkey and restarts the daemon to apply, preserving the
+   anyone pinning values in systemd/baatsun.service); the app window's Settings
+   page writes the hotkey and restarts the daemon to apply, preserving the
    model/compute-type keys it doesn't expose. resolve_model() returns the
    override if one is set and DEFAULT_MODEL otherwise; either way it's a name
    faster-whisper resolves and downloads itself, so this module stays
-   stdlib-only and the GUI's system Python can import it too. load_config()
+   stdlib-only and any interpreter here can import it.
+   The app window does not import it — electron/src/main/store.js mirrors it. load_config()
    drops keys that aren't in DEFAULT_CONFIG, which is what retires the
    `language`/`hinglish_model`/`model` keys from the versions that had a
    Hinglish mode, instead of letting an old one quietly pin the model.
@@ -124,51 +134,55 @@ src/baatsun_cleanup.py (stdlib only — urllib, no new venv dependency)
    returns None and the daemon types the raw transcript, so a dead network can
    never cost you a dictation.
 
-src/baatsun_gui.py (GTK4 + libadwaita, system Python — needs PyGObject)
-   The app window: an Adw.NavigationSplitView with five pages, collapsing to
-   one pane below 680px.
-     Home      what the app opens on. A time-of-day greeting, a rotating
-               quote, six stat tiles (dictations, words, estimated time saved,
-               day streak, time spoken, OpenAI spend) and a 14-day activity
-               chart. All of it is computed from the history the daemon already
-               keeps — nothing extra is stored for it. "Time saved" measures
-               the words against 40 wpm of typing, less the time the microphone
-               was actually open, and says so in a tooltip rather than
-               pretending to be precise. "OpenAI spend" totals what the cleanup
-               pass has cost, from the token counts OpenAI reports on each
-               call; dictations cleaned up before those were recorded are
-               estimated from their stored text, and the tooltip says how much
-               of the figure that is. The chart is one series in the accent, so
-               light and dark are each chosen by libadwaita; only the busiest
-               bar is labelled, and a "Show as a list" expander carries every
-               value for anyone not using a mouse.
-     Dictate   record control, a level meter, and the focused-window card —
-               which app the next transcript lands in and whether it will be
-               cleaned up or typed verbatim. Reads the daemon's `focus` event.
+electron/ (the app window — Electron + React, replaces the old GTK window)
+   Five pages behind a sidebar, in a frameless window that draws its own
+   header. The daemon, the pill and the tray are untouched by this: the pill
+   in particular cannot be Electron, because it needs wlr-layer-shell (overlay
+   layer, no keyboard focus) to sit above fullscreen windows without stealing
+   focus, and Chromium has no way to ask for that.
+     src/main/daemon.js   the unix-socket client. request() opens a socket per
+               command; subscribe() holds one open for the life of the window
+               and reconnects on its own, because the Settings page restarts
+               the daemon whenever the hotkey or transcription backend changes.
+     src/main/store.js    reads and writes the same files baatsun_config.py
+               owns, with the same shapes and the same 0600 key permissions. A
+               deliberate mirror, not a second source of truth — DEFAULTS here
+               and DEFAULT_CONFIG there are the same dictionary.
+     src/main/keycheck.js tests an API key against a listing endpoint, so the
+               Test buttons never bill you for pressing them.
+     src/main/preload.js  the whole renderer↔Node surface: explicit named
+               methods, no generic invoke-any-channel escape hatch, so
+               contextIsolation is doing real work.
+     Home      greeting, quote, six stat tiles and a 14-day chart, all computed
+               from the history the daemon already keeps. lib/stats.js is a
+               port of compute_stats/compute_spend — same 40 wpm typing
+               baseline, same 150 wpm fallback, same streak rule — so the
+               numbers match what the old window said rather than merely being
+               defensible.
+     Dictate   the recording orb, the state, and the focused-window card: which
+               app the next transcript lands in. Reads the daemon's `focus`.
      History   past transcripts grouped by day, searchable, filterable by
-               cleaned/verbatim, with copy/retype/delete/show-original per
-               row. Rows cap at four lines and expand when clicked: a
-               fifteen-minute dictation is one entry and thousands of words.
-     Words     the vocabulary, one term per row instead of one comma-separated
-               field. Saved on edit with no restart — the transcription path
-               re-reads config on every dictation.
-     Settings  hotkey, activation, cleanup, model, compute type, daemon. Apply
-               restarts the daemon only when the hotkey, activation mode or
-               model changed; everything else is re-read per dictation, and a
-               needless restart costs a model reload.
-   Fetches `history` on connect, then stays subscribed. Closing hides rather
-   than quits, so the tray icon can re-present it instantly. Uses no
-   Gtk.DrawingArea anywhere: cairo drawing from Python needs the separate
-   python3-gi-cairo package, so the level meter is animated boxes instead.
+               cleaned/verbatim, with copy/retype/delete per row.
+     Words     the vocabulary as chips rather than one comma-separated field,
+               written back as the string the daemon already reads. Saved on
+               edit with no restart.
+     Settings  hotkey, activation, transcription backend, cleanup, daemon.
+               Saving restarts the daemon only when the hotkey, activation,
+               model or backend changed; the backend has to, because it decides
+               whether the local model is loaded into memory at all.
+   The main process holds one subscription and buffers the last state, focus
+   and connection status: the socket is up before React mounts, and on a
+   healthy daemon nothing ever repeats those events, so the renderer asks for
+   a snapshot instead of waiting to be told.
 
 src/baatsun_tray.py (GTK3 + AppIndicator, separate process, system Python)
    Tray/status icon whose glyph reflects daemon state (idle/listening/
    transcribing) via the same subscribe stream. Menu: show history,
    toggle recording, quit. Runs as its own process because AppIndicator
-   only speaks GTK3's Gtk.Menu, and GTK3 and GTK4 typelibs can't be
-   loaded in the same Python process — "Show History" launches
-   baatsun_gui.py as a subprocess, which is a no-op re-present rather than
-   a second window if it's already running (GApplication D-Bus activation).
+   only speaks GTK3's Gtk.Menu, and there is no GTK4 or Wayland-native
+   equivalent every desktop implements — "Show History" runs bin/baatsun-gui,
+   which is a no-op re-present rather than a second window if one is already
+   up (Electron's single instance lock).
 
 src/baatsun_pill.py (GTK4 + gtk4-layer-shell, non-GNOME fallback)
    The pill for wlr-layer-shell compositors (sway, Hyprland, ...): an
@@ -198,10 +212,10 @@ gnome-extension/baatsun@umarbashirr.github.io/ (GJS, runs inside GNOME Shell)
 ```
 
 Transcript history is persisted to `~/.local/share/baatsun/history.json` and
-shown in `baatsun_gui.py`'s window. The daemon doesn't send any desktop
+shown in the app window. The daemon doesn't send any desktop
 notifications — state (listening/transcribing/idle) is only broadcast over
-the unix socket, which the tray icon glyph and the GUI header subtitle
-reflect live.
+the unix socket, which the tray icon glyph and the app window's
+header reflect live.
 
 **Why this shape:** GNOME on Wayland has no API for an app to grab a global
 hotkey itself, and a GNOME custom keyboard shortcut only fires on key
@@ -227,7 +241,7 @@ with `apt`:
 curl -fsSL https://raw.githubusercontent.com/umarbashirr/baatsun/main/install.sh | sudo bash
 ```
 
-This pulls in all system dependencies (`ydotool`, GTK4/libadwaita, PipeWire)
+This pulls in all system dependencies (`ydotool`, GTK4, PipeWire)
 automatically via `apt`, builds the `faster-whisper`/`numpy` virtualenv under
 `/opt/baatsun`, activates the ydotool udev rule, and adds you to the `input`
 group. Watch the output at the end for next steps — typically:
@@ -321,11 +335,16 @@ the keyboard directly.
 
 #### 4. Install the app window, tray icon, and pill dependencies
 
-`src/baatsun_gui.py` (GTK4 + libadwaita) needs PyGObject and the GTK4/
-libadwaita typelibs on your system Python:
+The app window is an Electron app. Build it once:
 
 ```bash
-sudo apt install -y python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
+cd electron && npm install && npm run build
+```
+
+The tray and the pill are still GTK and need PyGObject on your system Python:
+
+```bash
+sudo apt install -y python3-gi gir1.2-gtk-4.0
 ```
 
 `src/baatsun_tray.py` additionally needs the AppIndicator typelib:
@@ -626,9 +645,17 @@ Baatsun runs entirely offline by default — audio never leaves your machine, an
 nothing is logged beyond the transcript history you can see and clear yourself
 in the app window.
 
-The one exception is opt-in and off unless you turn it on: enabling **Cleanup
-with OpenAI** sends the *transcript text* (never the audio) to OpenAI for the
-windows classified as prose. Leave it off to keep the tool fully offline.
+There are two exceptions, both opt-in and both off unless you turn them on:
+
+- **Cleanup with OpenAI** sends the *transcript text* (never the audio) to
+  OpenAI, for the windows classified as prose.
+- **Transcribe with ElevenLabs** sends the *audio itself* — the recorded wav for
+  every dictation, whatever the window. This is the bigger of the two, and it is
+  the only setting in Baatsun that takes your voice off this machine.
+
+Leave both off to keep the tool fully offline. Each has its own key file
+(`~/.config/baatsun/openai.key`, `~/.config/baatsun/elevenlabs.key`, both 0600),
+and neither key is ever written into `config.json`.
 
 One thing worth being explicit about: reading raw evdev means the daemon
 sees every keystroke typed anywhere on your system, not just the hotkey. It
@@ -681,8 +708,8 @@ before trusting it with anything sensitive.
 - The hotkey combo is configurable (Settings panel or
   `~/.config/baatsun/config.json`) but limited to four curated pairs
   (`baatsun_config.HOTKEY_CHOICES`) rather than an arbitrary key — capturing
-  an arbitrary combo would need a "press your new hotkey" UI flow in
-  `baatsun_gui.py` that doesn't exist yet.
+  an arbitrary combo would need a "press your new hotkey" flow in the app
+  window that doesn't exist yet.
 - English only. The default model is an English-only distillation and there's no
   language setting; another language means pointing `model_override` at a
   multilingual model and changing `WHISPER_LANGUAGE` in

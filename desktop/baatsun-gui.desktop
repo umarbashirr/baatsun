@@ -6,4 +6,6 @@ Exec=baatsun-gui
 Icon=audio-input-microphone
 Terminal=false
 Categories=Utility;
-StartupWMClass=com.baatsun.Baatsun
+# Matches --class on XWayland and app.setName()/setDesktopName() on Wayland;
+# without it the window docks as a generic "Electron" with the wrong icon.
+StartupWMClass=baatsun

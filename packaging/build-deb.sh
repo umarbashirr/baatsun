@@ -35,6 +35,31 @@ mkdir -p "$STAGING/usr/share/gnome-shell/extensions"
 
 cp "$REPO_ROOT"/src/*.py "$STAGING/opt/baatsun/src/"
 
+# The application window is an Electron app, so the built renderer, the main
+# process and the Electron runtime itself all have to ship. This is what makes
+# the package large (~200 MB installed, nearly all of it the runtime) — the
+# app's own code is under 300 KB.
+ELECTRON_SRC="$REPO_ROOT/electron"
+if [ ! -d "$ELECTRON_SRC/node_modules/electron" ]; then
+    echo "error: $ELECTRON_SRC/node_modules/electron is missing." >&2
+    echo "       Run: (cd $ELECTRON_SRC && npm ci)" >&2
+    exit 1
+fi
+
+echo "Building the application window ..."
+(cd "$ELECTRON_SRC" && npm run build >/dev/null)
+
+mkdir -p "$STAGING/opt/baatsun/electron/node_modules"
+cp -r "$ELECTRON_SRC/dist" "$STAGING/opt/baatsun/electron/dist"
+cp -r "$ELECTRON_SRC/src/main" "$STAGING/opt/baatsun/electron/src-main-tmp"
+mkdir -p "$STAGING/opt/baatsun/electron/src"
+mv "$STAGING/opt/baatsun/electron/src-main-tmp" "$STAGING/opt/baatsun/electron/src/main"
+cp "$ELECTRON_SRC/package.json" "$STAGING/opt/baatsun/electron/package.json"
+# Only electron itself: everything else in node_modules is a build-time
+# dependency (vite, tailwind, react) already compiled into dist/.
+cp -r "$ELECTRON_SRC/node_modules/electron" \
+    "$STAGING/opt/baatsun/electron/node_modules/electron"
+
 install -m 755 "$REPO_ROOT/bin/baatsun-gui" "$STAGING/usr/bin/baatsun-gui"
 install -m 755 "$REPO_ROOT/bin/baatsun-tray" "$STAGING/usr/bin/baatsun-tray"
 install -m 755 "$REPO_ROOT/bin/baatsun-toggle" "$STAGING/usr/bin/baatsun-toggle"

@@ -1,6 +1,8 @@
 # Baatsun app mockup
 
-**This has shipped.** `src/baatsun_gui.py` now implements this shape, plus a
+**This has shipped, and has since been rebuilt.** The window this mocked up
+shipped as `src/baatsun_gui.py`, which has now been replaced by the Electron
+app in `electron/`. The shape below is what both implement, plus a
 Home page that wasn't in the proposal. Kept here as the original argument and
 as a place to try changes without touching the real window — it still talks to
 nothing, so it can't break anything.
