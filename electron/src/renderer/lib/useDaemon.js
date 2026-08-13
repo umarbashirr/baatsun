@@ -19,7 +19,7 @@ const HISTORY_LIMIT = 500
  */
 export function useDaemon() {
   const [state, setState] = useState({ state: 'idle' })
-  const [focus, setFocus] = useState({ app: '', title: '' })
+  const [focus, setFocus] = useState({ app: '', title: '', surface: '', cleanup: false })
   const [entries, setEntries] = useState([])
   const [connected, setConnected] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -61,7 +61,12 @@ export function useDaemon() {
           setState(event)
           break
         case 'focus':
-          setFocus({ app: event.app || '', title: event.title || '' })
+          setFocus({
+            app: event.app || '',
+            title: event.title || '',
+            surface: event.surface || '',
+            cleanup: !!event.cleanup,
+          })
           break
         case 'transcript':
           // Newest last, matching the daemon's own ordering; the pages that

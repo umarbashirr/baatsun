@@ -51,6 +51,13 @@ the audio itself.
   `gpt-4o-mini`, but only when the focused window is prose (LinkedIn, X, Slack).
   Terminals and editors are always typed verbatim. Your audio never leaves the
   machine; only the transcript text is sent, and only if you enable it.
+- **Laid out for wherever it lands** — the same cleanup pass knows what kind of
+  window it is typing into. Dictate into Gmail and a spoken greeting goes on its
+  own line above the body; into WhatsApp and it stays one line, because Enter
+  sends there; into X and it stays one block inside 280 characters; into
+  LinkedIn or a document and it becomes short paragraphs. It only ever changes
+  the shape and the register — it never writes a greeting, a sign-off or a
+  hashtag you didn't say.
 - **Configurable** — hotkey combo is adjustable from the Settings panel; the
   model and compute type are tunable via config file or env var.
 
@@ -112,8 +119,11 @@ src/baatsun.py (background daemon, systemd --user service)
         focus <json> — record which window has focus ({app, title}), sent by
                      the GNOME extension on every focus/title change and on
                      every reconnect; decides whether a transcript is cleaned
-                     up or typed verbatim, and is re-broadcast to subscribers
-                     as a `focus` event so the app window can show it
+                     up or typed verbatim and how it is laid out, and is
+                     re-broadcast to subscribers as a `focus` event carrying
+                     the daemon's own verdict ({app, title, context, surface,
+                     cleanup}) so the app window shows what will actually
+                     happen rather than working it out a second time
 
 src/baatsun_config.py (stdlib only — shared by the daemon and the tray)
    Reads/writes ~/.config/baatsun/config.json: model override, compute type,
@@ -131,10 +141,12 @@ src/baatsun_config.py (stdlib only — shared by the daemon and the tray)
 
 src/baatsun_context.py (stdlib only)
    Maps the focused window (class + title, reported by the GNOME extension) to
-   "developer" or "prose", deciding whether a transcript gets the cleanup pass.
-   Defaults to "developer" for anything unrecognised — cleaning a post that
-   didn't need it costs a re-read, but rewriting a coding prompt destroys the
-   specifics that made it work, so the safe direction is verbatim.
+   a surface — code, email, chat, post, social or docs — and, more coarsely, to
+   "developer" or "prose". The coarse answer decides whether a transcript gets
+   the cleanup pass at all; the surface decides how the cleaned text is laid
+   out. Defaults to code/"developer" for anything unrecognised — cleaning a post
+   that didn't need it costs a re-read, but rewriting a coding prompt destroys
+   the specifics that made it work, so the safe direction is verbatim.
 
 src/baatsun_cleanup.py (stdlib only — urllib, no new venv dependency)
    The optional OpenAI polish pass over a transcript. Takes a string, never a
@@ -636,6 +648,36 @@ That default is deliberately asymmetric. Cleaning a post that didn't need it
 costs you a re-read; "cleaning" a coding prompt rewrites the specifics that made
 it work. So an unknown window, a missing focus report, or a non-GNOME desktop
 all fall through to typing exactly what you said.
+
+#### How it lays the text out for the platform
+
+The same window report answers a second, finer question: what kind of place is
+this? A message to a colleague is not shaped like a post, and neither is shaped
+like an email. Whenever the cleanup pass runs, it is told which surface the text
+is heading for, and lays it out accordingly:
+
+| focused window | surface | what changes |
+|---|---|---|
+| Gmail, Outlook, Proton Mail, Thunderbird | email | a spoken greeting and sign-off each get their own line; the body becomes paragraphs |
+| WhatsApp, Slack, Telegram, Discord, Teams | chat | one line, no breaks at all — Enter sends here — and the spoken register is kept |
+| X, Mastodon, Bluesky, Threads | post | one block, and if what you said fits in 280 characters it stays inside 280 |
+| LinkedIn, Reddit | social | short paragraphs, plain first person, no hashtags |
+| Google Docs, Notion, Obsidian, Medium, Substack | docs | written prose in paragraphs |
+| terminals, editors, GitHub, anything unrecognised | code | nothing — typed exactly as transcribed |
+
+What it does *not* do is write anything for you. It never adds a greeting, a
+sign-off, a signature, a subject line, a hashtag or an emoji you didn't speak,
+and it never drops one of your points to fit a length. Those are the same
+preservation rules the proofreading pass already holds; the surface only
+governs layout and register. If you want a message composed rather than laid
+out, this isn't that, by design.
+
+Two consequences worth knowing. It works at the granularity of the application,
+not the text box: a window title says "Gmail", never whether your caret is in
+the compose box or the search field, so the whole app is treated as its dominant
+use. And it only applies where the cleanup pass runs at all — with cleanup off,
+or in a window classified as developer under *Prose windows only*, the raw
+transcript is typed and none of this happens.
 
 Every failure path — no key, bad key, network down, timeout, implausible
 response — types the raw transcript instead. A dictation is never lost to a

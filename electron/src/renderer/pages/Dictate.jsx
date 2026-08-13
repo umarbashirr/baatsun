@@ -19,6 +19,17 @@ const REASONS = {
   failed: 'Transcription failed — the recording was kept on disk.',
 }
 
+// The surface names baatsun_context.surface() returns, in the words a person
+// would use for them. "code" is left out on purpose: it is the one surface
+// where nothing is reshaped, and the badge says so in those terms instead.
+const SURFACES = {
+  email: 'Email layout',
+  chat: 'Chat message',
+  post: 'Post',
+  social: 'Feed post',
+  docs: 'Document',
+}
+
 /**
  * The recording orb.
  *
@@ -150,7 +161,17 @@ export default function Dictate({ daemon }) {
                   {daemon.focus.title || 'No window title'}
                 </p>
               </div>
-              <Badge tone="neutral">focused</Badge>
+              {/* What will happen to the next transcript here, not merely that
+                  this window has focus. The daemon works both out with the
+                  same classifier the typing path uses, so this cannot drift
+                  from what actually lands in the window. */}
+              {daemon.focus.cleanup ? (
+                <Badge tone="accent">
+                  {SURFACES[daemon.focus.surface] || 'Cleaned up'}
+                </Badge>
+              ) : (
+                <Badge tone="neutral">Verbatim</Badge>
+              )}
             </>
           ) : (
             <p className="text-[13px] text-ink-400">

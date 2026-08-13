@@ -336,6 +336,11 @@ def focus_event():
         "app": app,
         "title": title,
         "context": baatsun_context.classify(app, title),
+        # The finer answer: which set of layout conventions the next transcript
+        # will be shaped to. Sent alongside "context" rather than instead of it
+        # — that one is what decides whether anything is rewritten at all, and
+        # it is the word history entries are recorded under.
+        "surface": baatsun_context.surface(app, title),
         "cleanup": bool(cleanup_ready(cfg)
                         and baatsun_context.should_clean(cfg, app, title)),
     }
@@ -428,6 +433,10 @@ def maybe_clean(text, app, title):
     # to rest and re-enable the record button while the request is still in
     # flight. Staying "transcribing" keeps the sweep running, which is what a
     # user waiting on text actually needs to see.
+    # Which kind of place this is going — an email, a chat message, a post —
+    # so the cleanup pass lays it out the way that place expects. It only ever
+    # changes the shape and the register; the words stay the speaker's.
+    surface = baatsun_context.surface(app, title)
     usage = {}
     cleaned = baatsun_cleanup.clean(
         text, api_key, cfg.get("cleanup_model") or "gpt-4o-mini", log=log,
@@ -437,6 +446,7 @@ def maybe_clean(text, app, title):
         hinglish=bool(cfg.get("hinglish")),
         strength=cfg.get("cleanup_strength") or "grammar",
         usage=usage,
+        surface=surface,
     )
     # Empty when the request never got as far as an answer, which is a
     # different thing from a call that cost nothing.
@@ -444,7 +454,7 @@ def maybe_clean(text, app, title):
     if cleaned is None:
         return text, usage
     if cleaned != text:
-        log(f"cleaned: {cleaned!r}")
+        log(f"cleaned for {surface}: {cleaned!r}")
     return cleaned, usage
 
 

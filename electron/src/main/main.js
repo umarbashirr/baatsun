@@ -45,7 +45,11 @@ let unsubscribe = null
 // So the last of each is kept here and the renderer asks for a snapshot on
 // mount. This also survives a reload, which is why it isn't solved by simply
 // deferring the subscribe until did-finish-load.
-const snapshot = { connected: false, state: { state: 'idle' }, focus: { app: '', title: '' } }
+const snapshot = {
+  connected: false,
+  state: { state: 'idle' },
+  focus: { app: '', title: '', surface: '', cleanup: false },
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -118,7 +122,18 @@ function createWindow() {
   unsubscribe = daemon.subscribe(
     (event) => {
       if (event.type === 'state') snapshot.state = event
-      if (event.type === 'focus') snapshot.focus = { app: event.app || '', title: event.title || '' }
+      // Kept field by field rather than stored whole, so a stray "type" can't
+      // reach the renderer as part of the focus object. surface and cleanup
+      // are the daemon's verdict on the next transcript, and the Dictate page
+      // shows them — dropping them here would leave it guessing.
+      if (event.type === 'focus') {
+        snapshot.focus = {
+          app: event.app || '',
+          title: event.title || '',
+          surface: event.surface || '',
+          cleanup: !!event.cleanup,
+        }
+      }
       mainWindow?.webContents.send('daemon:event', event)
     },
     (status) => {

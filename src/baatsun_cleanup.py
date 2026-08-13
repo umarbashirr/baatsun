@@ -15,6 +15,11 @@ import json
 import urllib.error
 import urllib.request
 
+# Stdlib-only itself, and sitting in this same directory, so importing it costs
+# this module nothing it didn't already have. What it provides is the surface
+# names — email, chat, post — that SURFACE_LINES below is keyed by.
+import baatsun_context
+
 API_URL = "https://api.openai.com/v1/chat/completions"
 # Deliberately tight. The daemon calls this while holding state_lock, the same
 # lock the hotkey handler and shutdown path need, so this timeout is the worst
@@ -114,6 +119,64 @@ VOCABULARY_LINE = (
     "they appear, however they were spelled: {vocabulary}."
 )
 
+# One per surface baatsun_context can name, appended so the layout matches
+# where the text is going: an email gets its greeting on its own line, a chat
+# message stays one line, a post on X stays one block.
+#
+# Every one of these is about *layout and register* — never content. None of
+# them may introduce a word the speaker didn't say, which is why each one ends
+# by naming what it must not add. That is the same line the proofreading rules
+# above hold, and it is the reason this can be turned on for everybody rather
+# than hidden behind a switch: knowing you are in Gmail changes where the line
+# breaks go, not what the message says.
+_SURFACE_EMAIL = (
+    "This will be typed into an email, so lay it out as the body of one. If the "
+    "speaker opened with a greeting, put it on its own line with a blank line "
+    "after it; if they closed with a sign-off or their name, put that on its "
+    "own line too. Use plain, complete sentences — no chat shorthand. Do NOT "
+    "add a greeting, a sign-off, a signature or a subject line: if they did not "
+    "say it, it does not appear."
+)
+_SURFACE_CHAT = (
+    "This will be typed into a chat message. Keep it to a single line with no "
+    "line breaks at all — Enter sends here, so a paragraph break would post it "
+    "in pieces. Keep the conversational register the speaker used: do not make "
+    "it more formal, and do not add a greeting, a closing or an emoji."
+)
+_SURFACE_POST = (
+    "This will be typed into a post on X or a similar short-form timeline. Keep "
+    "it as one block of running text: no headings, no bullets, and no hashtags, "
+    "emoji or @-mentions unless the speaker actually said them. If what they "
+    "said fits in 280 characters, keep it inside 280 — punctuate it, don't pad "
+    "it. Never drop one of their points to save room."
+)
+_SURFACE_SOCIAL = (
+    "This will be typed into a LinkedIn or forum post, so lay it out to be "
+    "read in a feed: short paragraphs, plain first person, sentences in the "
+    "order they were spoken. No hashtags, no emoji and no headings unless the "
+    "speaker said them."
+)
+_SURFACE_DOCS = (
+    "This will be typed into a document, a note or an article editor, so lay it "
+    "out as written prose: full sentences in paragraphs, no chat shorthand. Do "
+    "not add a title, headings or bullets that were not spoken."
+)
+SURFACE_LINES = {
+    baatsun_context.EMAIL: _SURFACE_EMAIL,
+    baatsun_context.CHAT: _SURFACE_CHAT,
+    baatsun_context.POST: _SURFACE_POST,
+    baatsun_context.SOCIAL: _SURFACE_SOCIAL,
+    baatsun_context.DOCS: _SURFACE_DOCS,
+}
+
+# Surfaces whose layout is paragraphs. The others each say why not in their own
+# line above — a chat message is one line because Enter sends, a post is one
+# block because that is what a post looks like — so LINE_BREAK_LINE is withheld
+# there rather than contradicted.
+PARAGRAPH_SURFACES = frozenset({
+    baatsun_context.EMAIL, baatsun_context.SOCIAL, baatsun_context.DOCS,
+})
+
 # Only ever appended when the target window treats Enter as a newline — see
 # baatsun_context.allows_line_breaks. Grouping is explicitly not reordering:
 # the paragraph boundaries go between sentences that are already adjacent.
@@ -130,8 +193,17 @@ LINE_BREAK_LINE = (
 LINE_BREAK_MIN_WORDS = 40
 
 
+def wants_paragraphs(surface=None):
+    """Whether this surface is laid out in paragraphs at all.
+
+    None — an old caller, or a window nothing could be worked out about — keeps
+    the pre-surface behaviour of paragraphing whatever the window will take.
+    """
+    return surface is None or surface in PARAGRAPH_SURFACES
+
+
 def build_system_prompt(vocabulary="", line_breaks=False, hinglish=False,
-                       strength=GRAMMAR):
+                       strength=GRAMMAR, surface=None):
     # Hinglish guidance goes first: it changes how the input should be *read*,
     # which the proofreading rules below then apply to.
     preserve = _PRESERVE_NATURAL if strength == NATURAL else _PRESERVE_GRAMMAR
@@ -139,13 +211,18 @@ def build_system_prompt(vocabulary="", line_breaks=False, hinglish=False,
               + _PROMPT_HEAD + preserve + _PROMPT_TAIL)
     if vocabulary:
         prompt += "\n" + VOCABULARY_LINE.format(vocabulary=vocabulary)
-    if line_breaks:
+    # After the preservation rules and before the paragraphing, because it is
+    # narrower than the first and wider than the second.
+    if surface in SURFACE_LINES:
+        prompt += "\n" + SURFACE_LINES[surface]
+    if line_breaks and wants_paragraphs(surface):
         prompt += "\n" + LINE_BREAK_LINE
     return prompt
 
 
 def clean(text, api_key, model="gpt-4o-mini", log=None, vocabulary="",
-          line_breaks=False, hinglish=False, strength=GRAMMAR, usage=None):
+          line_breaks=False, hinglish=False, strength=GRAMMAR, usage=None,
+          surface=None):
     """Return the cleaned transcript, or None if it couldn't be produced.
 
     None is not an error the caller needs to handle beyond falling back to the
@@ -167,6 +244,7 @@ def clean(text, api_key, model="gpt-4o-mini", log=None, vocabulary="",
                 line_breaks and len(text.split()) >= LINE_BREAK_MIN_WORDS,
                 hinglish,
                 strength,
+                surface,
             )},
             {"role": "user", "content": text},
         ],
