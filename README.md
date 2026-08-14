@@ -54,8 +54,8 @@ the audio itself.
 - **Laid out for wherever it lands** — the same cleanup pass knows what kind of
   window it is typing into. Dictate into Gmail and a spoken greeting goes on its
   own line above the body; into WhatsApp and it stays one line, because Enter
-  sends there; into X and it stays one block inside 280 characters; into
-  LinkedIn or a document and it becomes short paragraphs. It only ever changes
+  sends there; into X, LinkedIn or a document and a long one becomes short
+  paragraphs, while a short post stays the single line it was. It only ever changes
   the shape and the register — it never writes a greeting, a sign-off or a
   hashtag you didn't say.
 - **Configurable** — hotkey combo is adjustable from the Settings panel; the
@@ -660,7 +660,7 @@ is heading for, and lays it out accordingly:
 |---|---|---|
 | Gmail, Outlook, Proton Mail, Thunderbird | email | a spoken greeting and sign-off each get their own line; the body becomes paragraphs |
 | WhatsApp, Slack, Telegram, Discord, Teams | chat | one line, no breaks at all — Enter sends here — and the spoken register is kept |
-| X, Mastodon, Bluesky, Threads | post | one block, and if what you said fits in 280 characters it stays inside 280 |
+| X, Mastodon, Bluesky, Threads | post | short paragraphs once it is long enough to need them; a short post stays one block, and what fits in 280 characters stays inside 280 |
 | LinkedIn, Reddit | social | short paragraphs, plain first person, no hashtags |
 | Google Docs, Notion, Obsidian, Medium, Substack | docs | written prose in paragraphs |
 | terminals, editors, GitHub, anything unrecognised | code | nothing — typed exactly as transcribed |

@@ -144,11 +144,11 @@ _SURFACE_CHAT = (
     "it more formal, and do not add a greeting, a closing or an emoji."
 )
 _SURFACE_POST = (
-    "This will be typed into a post on X or a similar short-form timeline. Keep "
-    "it as one block of running text: no headings, no bullets, and no hashtags, "
-    "emoji or @-mentions unless the speaker actually said them. If what they "
-    "said fits in 280 characters, keep it inside 280 — punctuate it, don't pad "
-    "it. Never drop one of their points to save room."
+    "This will be typed into a post on X or a similar short-form timeline. No "
+    "headings, no bullets, and no hashtags, emoji or @-mentions unless the "
+    "speaker actually said them. If what they said fits in 280 characters, keep "
+    "it inside 280 — punctuate it, don't pad it. Never drop one of their points "
+    "to save room."
 )
 _SURFACE_SOCIAL = (
     "This will be typed into a LinkedIn or forum post, so lay it out to be "
@@ -169,12 +169,19 @@ SURFACE_LINES = {
     baatsun_context.DOCS: _SURFACE_DOCS,
 }
 
-# Surfaces whose layout is paragraphs. The others each say why not in their own
-# line above — a chat message is one line because Enter sends, a post is one
-# block because that is what a post looks like — so LINE_BREAK_LINE is withheld
-# there rather than contradicted.
+# Surfaces whose layout is paragraphs. Only chat is left out, and for a reason
+# that is not stylistic: Enter sends there, so a paragraph break would post the
+# message in pieces. Everywhere a break is survivable, a long dictation gets
+# one, because a wall of text is the thing people actually complain about.
+#
+# A post on X belongs in here, briefly did not, and that was a regression: a
+# 200-word post came back as one block where it used to be three paragraphs.
+# The 280-character guidance in _SURFACE_POST is about *length*, not layout —
+# and since LINE_BREAK_LINE only applies from LINE_BREAK_MIN_WORDS up, a post
+# short enough to be one breath still comes back as one block on its own.
 PARAGRAPH_SURFACES = frozenset({
-    baatsun_context.EMAIL, baatsun_context.SOCIAL, baatsun_context.DOCS,
+    baatsun_context.EMAIL, baatsun_context.POST, baatsun_context.SOCIAL,
+    baatsun_context.DOCS,
 })
 
 # Only ever appended when the target window treats Enter as a newline — see
