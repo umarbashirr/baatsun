@@ -51,6 +51,7 @@ case "$1" in
 
         udevadm control --reload-rules >/dev/null 2>&1 || true
         udevadm trigger --name-match=uinput >/dev/null 2>&1 || true
+        update-desktop-database -q /usr/share/applications >/dev/null 2>&1 || true
 
         TARGET_USER="${SUDO_USER:-}"
         if [ -z "$TARGET_USER" ] && [ -n "${PKEXEC_UID:-}" ]; then
@@ -87,8 +88,8 @@ case "$1" in
         echo "The pill (the bottom-centre recording indicator) autostarts on next"
         echo "login; run 'baatsun-pill' now to bring it up immediately. On GNOME"
         echo "this just enables the bundled Shell extension — no window to launch."
-        echo "The tray icon and history window are still available: 'baatsun-tray',"
-        echo "or open the 'Baatsun' app from your launcher. Full docs:"
+        echo "Settings, API keys and history live in the Baatsun window — search"
+        echo "the app launcher for 'Baatsun', or run 'baatsun-gui'. Full docs:"
         echo "https://github.com/umarbashirr/baatsun#readme"
         echo ""
         ;;

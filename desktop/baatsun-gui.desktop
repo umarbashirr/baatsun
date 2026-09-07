@@ -1,11 +1,14 @@
 [Desktop Entry]
 Type=Application
 Name=Baatsun
-Comment=Transcript history, recording controls, and settings for baatsun
+GenericName=Voice dictation
+Comment=Transcript history, API keys, recording controls, and settings for baatsun
 Exec=baatsun-gui
 Icon=audio-input-microphone
 Terminal=false
-Categories=Utility;
+Categories=Utility;AudioVideo;
+Keywords=baatsun;dictation;transcription;voice;whisper;speech;settings;openai;elevenlabs;api;
+StartupNotify=true
 # Matches --class on XWayland and app.setName()/setDesktopName() on Wayland;
 # without it the window docks as a generic "Electron" with the wrong icon.
 StartupWMClass=baatsun

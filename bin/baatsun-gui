@@ -11,7 +11,6 @@ an installed tree under /opt/baatsun, and a git checkout being run in place.
 """
 import os
 import shutil
-import subprocess
 import sys
 
 INSTALLED_APP = "/opt/baatsun/electron"
@@ -61,18 +60,13 @@ def main():
 
     argv = [electron, APP_DIR, f"--class={WM_CLASS}"]
 
-    # Chromium's setuid sandbox needs chrome-sandbox owned by root and mode
-    # 4755. The .deb's postinst does that; a checkout won't have it, and
-    # refusing to start is worse than starting unsandboxed for a window that
-    # loads no remote content (see the CSP in src/renderer/index.html).
-    sandbox_helper = os.path.join(
-        APP_DIR, "node_modules", "electron", "dist", "chrome-sandbox")
-    try:
-        usable = os.stat(sandbox_helper).st_uid == 0
-    except OSError:
-        usable = False
-    if not usable:
-        argv.append("--no-sandbox")
+    # Always --no-sandbox. Chromium's setuid helper is not enough on Ubuntu's
+    # AppArmor user-namespace policy: Electron exits before it creates a
+    # window, and a .desktop launch has nowhere to print that. This window
+    # loads no remote content (see the CSP in src/renderer/index.html), so
+    # refusing to start is worse than starting unsandboxed. postinst still
+    # marks chrome-sandbox 4755 for anyone who launches the binary directly.
+    argv.append("--no-sandbox")
 
     # Wayland-native where the session is Wayland, XWayland otherwise. Left to
     # Electron rather than pinned, because pinning it breaks the other one.

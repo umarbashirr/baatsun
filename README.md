@@ -726,6 +726,13 @@ before trusting it with anything sensitive.
 - **Tray icon doesn't appear** — on GNOME, make sure the AppIndicator Shell
   extension is enabled (step 4 above); on other desktops, confirm your
   status bar supports the AppIndicator/KStatusNotifierItem protocol.
+- **No Baatsun window / nothing in the app launcher** — the settings UI is
+  not the pill and not the daemon; it is a separate app named **Baatsun**.
+  Search for that exact name (not a near-miss like "bathroom"), or run
+  `baatsun-gui` from a terminal. If the command is missing, the `.deb` did
+  not finish installing. If the command exists but no window appears, an
+  older build let Chromium's sandbox kill the process with no error — run
+  `baatsun-gui` in a terminal to see that, and install 0.10.3 or later.
 - **Pill doesn't appear on GNOME** — check it's enabled:
   `gnome-extensions list --enabled | grep baatsun`. If it's not, run
   `gnome-extension/install.sh` again and log out and back in — Wayland can't

@@ -71,7 +71,12 @@ install -m 755 "$REPO_ROOT/bin/baatsun-pill" "$STAGING/usr/bin/baatsun-pill"
 
 install -m 644 "$REPO_ROOT/packaging/debian/baatsun.service" "$STAGING/usr/lib/systemd/user/baatsun.service"
 install -m 644 "$REPO_ROOT/systemd/60-ydotool.rules" "$STAGING/usr/lib/udev/rules.d/60-ydotool.rules"
-install -m 644 "$REPO_ROOT/desktop/baatsun-gui.desktop" "$STAGING/usr/share/applications/baatsun-gui.desktop"
+# Absolute Exec so GNOME's launcher PATH (which often omits ~/.local/bin)
+# still finds the window. The checkout copy keeps the unqualified name.
+sed -e 's|^Exec=baatsun-gui$|Exec=/usr/bin/baatsun-gui|' \
+    "$REPO_ROOT/desktop/baatsun-gui.desktop" \
+    > "$STAGING/usr/share/applications/baatsun-gui.desktop"
+chmod 644 "$STAGING/usr/share/applications/baatsun-gui.desktop"
 install -m 644 "$REPO_ROOT/autostart/baatsun-pill.desktop" "$STAGING/etc/xdg/autostart/baatsun-pill.desktop"
 install -m 644 "$REPO_ROOT/packaging/debian/copyright" "$STAGING/usr/share/doc/baatsun/copyright"
 
