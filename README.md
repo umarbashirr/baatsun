@@ -65,7 +65,7 @@ the audio itself.
 
 - Linux with [PipeWire](https://pipewire.org/) for audio capture (default on
   most modern distros, including Ubuntu 22.10+).
-- Python 3.10+.
+- Python 3.12+ (the packaged `numpy` pin has no wheels for earlier versions).
 - [`ydotool`](https://github.com/ouija/ydotool) for typing into the focused
   window (works under both X11 and Wayland).
 - Node.js 20+ and npm, to build the app window (Electron + React).
@@ -261,7 +261,7 @@ with `apt`:
 curl -fsSL https://raw.githubusercontent.com/umarbashirr/baatsun/main/install.sh | sudo bash
 ```
 
-This pulls in all system dependencies (`ydotool`, GTK4, PipeWire)
+This pulls in all system dependencies (`ydotool`, GTK4, PipeWire, `python3-dev`)
 automatically via `apt`, builds the `faster-whisper`/`numpy` virtualenv under
 `/opt/baatsun`, activates the ydotool udev rule, and adds you to the `input`
 group. Watch the output at the end for next steps — typically:
@@ -293,10 +293,10 @@ the recommended path for normal use.
 git clone https://github.com/umarbashirr/baatsun.git
 cd baatsun
 
-sudo apt install -y python3-venv python3-pip ydotool
+sudo apt install -y python3-venv python3-pip python3-dev ydotool
 
 python3 -m venv venv
-venv/bin/pip install faster-whisper numpy
+venv/bin/pip install -r packaging/requirements.txt
 
 mkdir -p ~/.local/bin
 ln -sf "$(pwd)"/bin/baatsun-{gui,tray,toggle,pill} ~/.local/bin/
@@ -749,6 +749,11 @@ before trusting it with anything sensitive.
   `~/.cache/huggingface/hub/models--Systran--faster-whisper-small.en` to
   retry from scratch. To run fully offline, set `model_override` to a local
   model directory.
+- **`apt install` fails building `evdev` / `Python.h: No such file or directory`**
+  — the daemon's virtualenv compiles `evdev` from source (PyPI has no Linux
+  wheel). Install headers and finish configuring the package:
+  `sudo apt install -y python3-dev && sudo dpkg --configure -a`.
+  The `.deb` now depends on `python3-dev` so a fresh install pulls it in.
 
 ## Roadmap / known limitations
 

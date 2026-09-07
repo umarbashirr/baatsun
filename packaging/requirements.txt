@@ -24,8 +24,14 @@
 # pinned install.
 #
 # Pins are exact, so a Python version with no wheel for one of them fails the
-# install loudly rather than quietly resolving to something else. If that
-# happens on a newer distro, regenerate rather than loosening.
+# install loudly rather than quietly resolving to something else. numpy 2.5.1
+# needs Python 3.12+, which is why the .deb Depends on python3 (>= 3.12) rather
+# than the 3.10 the daemon itself would run on. If a newer distro has no wheel,
+# regenerate rather than loosening.
+#
+# evdev publishes no Linux wheels — postinst compiles it, which is why the
+# package Depends on python3-dev. A laptop without headers fails at
+# `#include <Python.h>` and leaves the .deb half-configured.
 
 # Direct: what the daemon actually imports.
 faster-whisper==1.2.1

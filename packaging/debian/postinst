@@ -26,7 +26,16 @@ case "$1" in
             echo "baatsun: $REQUIREMENTS is missing; cannot build the virtualenv." >&2
             exit 1
         fi
-        "$VENV/bin/pip" install --quiet --require-virtualenv -r "$REQUIREMENTS"
+        # evdev ships sdist-only, so this compiles a C extension (python3-dev
+        # is a package Depends for that). Keep pip's output visible: the
+        # wheels are large, and --quiet made a missing Python.h look like apt
+        # had hung and then failed with no cause.
+        if ! "$VENV/bin/pip" install --require-virtualenv -r "$REQUIREMENTS"; then
+            echo "baatsun: failed to install Python dependencies into $VENV." >&2
+            echo "         evdev has to be compiled; install python3-dev and retry:" >&2
+            echo "           sudo apt install -y python3-dev && sudo dpkg --configure -a" >&2
+            exit 1
+        fi
 
         chmod -R a+rX /opt/baatsun
 

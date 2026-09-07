@@ -83,4 +83,7 @@ fi
 
 echo "baatsun: installing (this also builds the transcription venv, needs network access)..."
 apt-get update -qq
-apt-get install -y "$DEB_PATH"
+# evdev has no Linux wheel on PyPI, so postinst compiles it and needs Python.h.
+# python3-dev is also a package Depends from this commit; installing it here
+# still unblocks already-published .deb releases that omitted it.
+apt-get install -y python3-dev "$DEB_PATH"
