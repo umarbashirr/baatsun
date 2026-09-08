@@ -46,9 +46,8 @@ CLEANUP_SCOPE_CHOICES = ["prose", "all"]
 # speech, and means your audio leaves this computer. That is a real trade, not
 # an upgrade, which is why it is opt-in and named plainly in Settings.
 STT_BACKEND_CHOICES = ["local", "elevenlabs"]
-# "grammar" fixes only what is wrong; "natural" also replaces phrasing that is
-# understandable but not how a native speaker would say it. Neither is allowed
-# to restructure sentences — that is what keeps the meaning yours.
+# "grammar" and "natural" are both offered in Settings. Cleanup now uses one
+# editor prompt for either; the distinction is kept so existing configs load.
 CLEANUP_STRENGTH_CHOICES = ["grammar", "natural"]
 
 DEFAULT_CONFIG = {

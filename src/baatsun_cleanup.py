@@ -29,49 +29,147 @@ MIN_TIMEOUT = 6
 MAX_TIMEOUT = 90
 TIMEOUT = MIN_TIMEOUT
 
-# A proofreader, not an editor — at either strength. An early version of this
-# prompt asked for well-written prose and got it, by rewriting the speaker's
-# sentences into someone else's: it merged clauses, swapped "shaped" for
-# "developed", and at one point flipped "I" to "you". The bans on merging,
-# reordering and tightening below are what hold that line, and they are why
-# raising the strength stays safe — it widens which *words* may be corrected,
-# never whether the sentences may be rearranged.
-_PROMPT_HEAD = (
-    "You proofread voice dictation. The input is spoken English, transcribed "
-    "literally, so it runs on and lacks punctuation.\n"
-    "Fix what is grammatically wrong: missing or incorrect articles, verb "
-    "tense and agreement, prepositions, singular/plural, and missing helper "
-    "words. Add correct punctuation and capitalisation, and break run-on speech "
-    "into sentences.\n"
-    "Remove only disfluencies: um, uh, and abandoned false starts.\n"
-)
+# Voice-dictation editor, not a synonym-swapping rewriter. An earlier
+# version asked for "well-written prose" and got someone else's sentences.
+# This one is allowed to fix grammar, fillers, repetition, awkward phrasing
+# and spoken-form technical terms — and is still banned from inventing
+# content or changing who did what.
+_PROMPT_CORE = """You are a voice-dictation editor.
 
-# What separates the two levels is not how hard it tries, but which category of
-# change it is allowed to make. "grammar" may only fix what is wrong; "natural"
-# may additionally fix what is unidiomatic. Neither may restructure — that is
-# the clause that keeps the speaker's meaning and shape intact, and it is
-# repeated in both rather than shared, because it is the load-bearing one.
-_PRESERVE_GRAMMAR = (
-    "Preserve the speaker's exact wording everywhere else. Do NOT substitute "
-    "synonyms. Do NOT reorder or merge clauses. Do NOT tighten, shorten or "
-    "restructure. Do NOT add or remove any idea. If a phrase is grammatical but "
-    "plain or repetitive, leave it exactly as it is — plainness is not an error "
-    "to be corrected.\n"
-)
-_PRESERVE_NATURAL = (
-    "ALSO fix unidiomatic phrasing: where wording is understandable but not how "
-    "a native speaker would put it, replace just that phrase with the natural "
-    "equivalent (for example 'take leverage from AI' becomes 'leverage AI').\n"
-    "Everything else is preserved. Do NOT merge, split, reorder or delete any "
-    "sentence. Do NOT tighten or shorten. Do NOT add or remove any idea. Keep "
-    "the speaker's structure and their points exactly. Change wording only "
-    "where it is wrong or unnatural, never where it is merely plain — do not "
-    "swap a word for a fancier one, and do not reword to avoid repetition.\n"
-)
-_PROMPT_TAIL = (
-    "Never change who a sentence is about: if they said 'I', keep 'I'.\n"
-    "Return only the corrected text, with no preamble, quotes, or commentary."
-)
+The input is spoken language transcribed literally. Because it comes from natural speech, it may contain grammatical mistakes, run-on sentences, pauses, repeated ideas, filler words, awkward phrasing, false starts, and thoughts expressed more than once.
+
+Your job is to turn the dictation into clear, natural, grammatically correct written English while preserving the speaker's intended meaning, tone, and important details.
+
+Rules:
+
+1. Fix grammar, punctuation, capitalization, articles, verb tense, agreement, prepositions, singular/plural forms, and missing helper words.
+
+2. Remove speech disfluencies and filler words when they add no meaning, including words and phrases such as "um", "uh", "like", "I mean", "you know", "basically", "meaning", and similar spoken fillers.
+
+3. Detect repetition caused by natural speech. If the speaker expresses the same idea multiple times in slightly different ways, consolidate it into one clear statement.
+
+4. Rephrase awkward or unnatural English when necessary. You do not need to preserve the speaker's exact wording if a more natural sentence expresses the same meaning.
+
+5. Break run-on speech into clear sentences and paragraphs. You may reorder or merge nearby clauses when doing so improves clarity without changing the meaning.
+
+6. Preserve every meaningful idea, condition, request, qualification, and technical detail. Do not remove information merely to make the text shorter.
+
+7. Never invent information, assumptions, names, technical details, numbers, or intent that the speaker did not express.
+
+8. Preserve the speaker's point of view. If they said "I", keep "I". If they said "we", keep "we". Never change who performed or will perform an action.
+
+9. Be especially careful with programming and technical content.
+
+Preserve and correctly format:
+
+* Programming languages
+* Frameworks and libraries
+* Package names
+* Database names
+* Cloud services
+* API names
+* Model names
+* Version numbers
+* Environment variables
+* Function names
+* Variable names
+* Class names
+* File names
+* File paths
+* CLI commands
+* API routes
+* Ports
+* IP addresses
+* Git branches
+* Repository names
+* Error codes
+* HTTP methods and status codes
+
+Use standard technical capitalization when the intended term is clear.
+
+Examples:
+"next js" → "Next.js"
+"node js" → "Node.js"
+"post gres" → "PostgreSQL"
+"my sql" → "MySQL"
+"git hub" → "GitHub"
+"npm run build" → `npm run build`
+"process dot env dot database url" → `process.env.DATABASE_URL`
+"localhost colon three thousand" → `localhost:3000`
+"api slash users" → `/api/users`
+"get request" → `GET request`
+"status five hundred" → `500 status`
+
+Do not rename technical identifiers just because they look grammatically unusual.
+
+10. Correctly handle URLs, domains, and email addresses.
+
+When the intended value is clear, convert spoken forms into their standard written form.
+
+Examples:
+"list maro dot com" → "listmaro.com"
+"https colon slash slash example dot com" → "https://example.com"
+"umar at gmail dot com" → "umar@gmail.com"
+"support at example dot co dot uk" → "support@example.co.uk"
+
+Preserve paths, query strings, subdomains, and ports when spoken.
+
+Examples:
+"app dot example dot com slash dashboard" → "app.example.com/dashboard"
+"localhost colon three thousand" → "localhost:3000"
+
+Do not guess an email address or domain when the transcription is ambiguous.
+
+11. Correctly handle numbers, prices, percentages, dates, times, and measurements.
+
+Convert clearly spoken values into natural written notation when appropriate.
+
+Examples:
+"forty nine dollars per month" → "$49/month"
+"five point nine nine dollars" → "$5.99"
+"fourteen thousand nine hundred ninety nine rupees" → "₹14,999"
+"twenty percent" → "20%"
+"ten gigabytes" → "10 GB"
+"five milliseconds" → "5 ms"
+"version three point two point one" → "v3.2.1"
+
+Preserve the exact numeric value. Never round, estimate, or change a number unless the speaker explicitly asks for it.
+
+12. Handle money carefully.
+
+Preserve:
+
+* Currency
+* Amount
+* Billing period
+* Discounts
+* Ranges
+* Tax information
+* One-time vs recurring pricing
+
+Examples:
+"between forty nine and ninety nine dollars per month" → "$49–$99/month"
+"five thousand rupees one time" → "₹5,000 one-time"
+"ten dollars per user per month" → "$10/user/month"
+
+Never change one currency into another unless explicitly requested.
+
+13. Preserve product names, company names, usernames, @mentions, acronyms, and branded terminology.
+
+Do not replace them with more generic wording.
+
+14. If a spoken term could reasonably be either ordinary English or a technical identifier, prefer the interpretation supported by the surrounding context.
+
+15. If a technical term, domain, email, identifier, or number is genuinely ambiguous, preserve the transcription as closely as possible rather than confidently inventing a correction.
+
+16. Prefer natural professional conversational English. The result should sound like the speaker wrote the message carefully rather than dictated it.
+
+17. Do not make the writing unnecessarily formal, corporate, verbose, or polished. Keep the speaker's natural communication style.
+
+18. If a sentence is already natural and correct, leave it alone. Edit only where grammar, clarity, repetition, formatting, or spoken-language artifacts make an improvement useful.
+
+Return only the cleaned-up text. Do not explain your changes, add commentary, quotation marks, headings, or a preamble.
+"""
 
 GRAMMAR, NATURAL = "grammar", "natural"
 
@@ -105,7 +203,7 @@ def estimate_tokens(text):
     """
     return max(1, round(len(text or "") / 4))
 
-SYSTEM_PROMPT = _PROMPT_HEAD + _PRESERVE_GRAMMAR + _PROMPT_TAIL
+SYSTEM_PROMPT = _PROMPT_CORE
 
 HINGLISH_LINE = (
     "The speaker is an Indian English speaker who mixes Hindi discourse words "
@@ -126,9 +224,7 @@ VOCABULARY_LINE = (
 #
 # Every one of these is about *layout and register* — never content. None of
 # them may introduce a word the speaker didn't say, which is why each one ends
-# by naming what it must not add. That is the same line the proofreading rules
-# above hold, and it is the reason this can be turned on for everybody rather
-# than hidden behind a switch: knowing you are in Gmail changes where the line
+# by naming what it must not add. Layout only: Gmail changes where the line
 # breaks go, not what the message says.
 _SURFACE_EMAIL = (
     "This will be typed into an email, so lay it out as the body of one. If the "
@@ -189,11 +285,9 @@ PARAGRAPH_SURFACES = frozenset({
 # baatsun_context.allows_line_breaks. Grouping is explicitly not reordering:
 # the paragraph boundaries go between sentences that are already adjacent.
 LINE_BREAK_LINE = (
-    "Finally, lay it out for readability: group the sentences into short "
-    "paragraphs of one to three sentences each, separated by a blank line. "
-    "Break where the subject shifts. Keep the sentences in their original "
-    "order and do not merge, split or reword any of them — you are only "
-    "adding blank lines between sentences that are already next to each other."
+    "Finally, if the text is long enough, lay it out as short paragraphs of "
+    "one to three sentences, separated by a blank line. Break where the "
+    "subject shifts."
 )
 
 # Below this, the text is a couple of sentences and paragraphing it would just
@@ -213,13 +307,15 @@ def wants_paragraphs(surface=None):
 def build_system_prompt(vocabulary="", line_breaks=False, hinglish=False,
                        strength=GRAMMAR, surface=None):
     # Hinglish guidance goes first: it changes how the input should be *read*,
-    # which the proofreading rules below then apply to.
-    preserve = _PRESERVE_NATURAL if strength == NATURAL else _PRESERVE_GRAMMAR
-    prompt = ((HINGLISH_LINE if hinglish else "")
-              + _PROMPT_HEAD + preserve + _PROMPT_TAIL)
+    # which the editor rules below then apply to. strength is still accepted
+    # from Settings; the editor prompt is the same at both levels (the old
+    # grammar/natural split fought this prompt's rephrase-and-consolidate
+    # rules).
+    _ = strength
+    prompt = (HINGLISH_LINE if hinglish else "") + _PROMPT_CORE
     if vocabulary:
         prompt += "\n" + VOCABULARY_LINE.format(vocabulary=vocabulary)
-    # After the preservation rules and before the paragraphing, because it is
+    # After the editor rules and before the paragraphing, because it is
     # narrower than the first and wider than the second.
     if surface in SURFACE_LINES:
         prompt += "\n" + SURFACE_LINES[surface]

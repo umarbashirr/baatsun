@@ -273,7 +273,7 @@ export default function Settings() {
               </Field>
               <Field
                 label="Correction level"
-                hint="Natural also fixes phrasing a native speaker wouldn't use"
+                hint="Same editor prompt at both levels; Natural is kept for older configs"
               >
                 <Select
                   value={cfg.cleanup_strength}
