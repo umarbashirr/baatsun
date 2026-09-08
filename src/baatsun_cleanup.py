@@ -552,6 +552,45 @@ Do not automatically add:
 
 unless the speaker actually intended that style.
 
+SOCIAL POST / TWEET FORMATTING
+
+If the dictation appears to be intended for a tweet, X post, LinkedIn post, caption, or other social post, optimize the formatting for readability.
+
+Do not return one dense paragraph when the thought contains multiple distinct points.
+
+Use short paragraphs and line breaks so the post is easy to scan on a phone.
+
+Prefer:
+
+* 1 to 2 sentences per paragraph
+* Short standalone lines for comparisons or emphasis
+* Blank lines between major thoughts
+* One clear idea per visual block
+
+Do not turn every sentence into a separate line mechanically. Use line breaks where they improve rhythm and readability.
+
+For lists or repeated comparisons, compact formatting is allowed.
+
+Example:
+
+"for Java developers Java is best, for Node developers Node, for PHP developers PHP"
+
+may become:
+
+Java dev? Java.
+
+Node.js dev? Node.js.
+
+PHP dev? PHP.
+
+Preserve the speaker's meaning and tone while making the post visually easy to read.
+
+Do not add hooks, emojis, hashtags, calls to action, or engagement bait unless the speaker asked for them.
+
+If the content is clearly a social post, prioritize scanability over paragraph-style prose.
+
+Do not apply this layout to a chat composer where Enter sends the message — those stay one line.
+
 CONTEXTUAL CORRECTION
 
 38. Use the surrounding sentence to resolve obvious transcription errors.
@@ -689,17 +728,19 @@ _SURFACE_CHAT = (
     "it more formal, and do not add a greeting, a closing or an emoji."
 )
 _SURFACE_POST = (
-    "This will be typed into a post on X or a similar short-form timeline. No "
-    "headings, no bullets, and no hashtags, emoji or @-mentions unless the "
-    "speaker actually said them. If what they said fits in 280 characters, keep "
-    "it inside 280 — punctuate it, don't pad it. Never drop one of their points "
-    "to save room."
+    "This will be typed into a post on X or a similar short-form timeline. "
+    "Use the social-post layout above: short scannable blocks and blank lines "
+    "between distinct points, not one dense paragraph. No headings, no "
+    "bullets, and no hashtags, emoji or @-mentions unless the speaker actually "
+    "said them. If what they said fits in 280 characters, keep it inside 280 "
+    "— punctuate it, don't pad it, and still break lines when there are "
+    "distinct points. Never drop one of their points to save room."
 )
 _SURFACE_SOCIAL = (
-    "This will be typed into a LinkedIn or forum post, so lay it out to be "
-    "read in a feed: short paragraphs, plain first person, sentences in the "
-    "order they were spoken. No hashtags, no emoji and no headings unless the "
-    "speaker said them."
+    "This will be typed into a LinkedIn or forum post. Use the social-post "
+    "layout above: short paragraphs, blank lines between major thoughts, "
+    "plain first person, sentences in the order they were spoken. No "
+    "hashtags, no emoji and no headings unless the speaker said them."
 )
 _SURFACE_DOCS = (
     "This will be typed into a document, a note or an article editor, so lay it "
@@ -721,9 +762,9 @@ SURFACE_LINES = {
 #
 # A post on X belongs in here, briefly did not, and that was a regression: a
 # 200-word post came back as one block where it used to be three paragraphs.
-# The 280-character guidance in _SURFACE_POST is about *length*, not layout —
-# and since LINE_BREAK_LINE only applies from LINE_BREAK_MIN_WORDS up, a post
-# short enough to be one breath still comes back as one block on its own.
+# The 280-character guidance in _SURFACE_POST is about *length*, not layout.
+# Short comparison posts still get line breaks from the social-post rules in
+# the core prompt; LINE_BREAK_LINE is the extra nudge on longer dumps.
 PARAGRAPH_SURFACES = frozenset({
     baatsun_context.EMAIL, baatsun_context.POST, baatsun_context.SOCIAL,
     baatsun_context.DOCS,
