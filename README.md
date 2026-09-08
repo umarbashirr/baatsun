@@ -743,9 +743,16 @@ before trusting it with anything sensitive.
   not being installed (see step 4 above). On a plain X11 session or a
   Wayland compositor without `wlr-layer-shell`, the pill isn't available at
   all — use the tray icon instead.
+- **Long ElevenLabs dictation types nothing / hangs ~30s** — older builds
+  uploaded the whole wav after you released, and Scribe's 30s timeout killed
+  a 5–10 minute brainstorm. Current builds send 20s slices *while you talk*;
+  after you stop you only wait on the leftover tail plus ChatGPT cleanup.
+  Watch `journalctl --user -u baatsun.service -f` for `elevenlabs chunk N sent`.
 - **Transcription is slower than you'd like** — set `model_override` to
   `base.en` (see [Configuration](#configuration)); it's about 2x quicker than
-  `small.en` but does substitute words.
+  `small.en` but does substitute words. On ElevenLabs, slowness after a long
+  talk is usually ChatGPT cleanup (scales with word count) or `ydotool`
+  typing ~12ms per character, not Scribe itself.
 - **Nothing happens on a fresh install** — the first run downloads the ~250 MB
   model and the hotkey stays unresponsive until it lands. Check
   `journalctl --user -u baatsun.service -f`; you should see `model loaded` once

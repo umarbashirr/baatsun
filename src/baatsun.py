@@ -18,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+import wave
 
 from evdev import InputDevice, ecodes, list_devices
 
@@ -100,15 +101,18 @@ state = {
     # transcribing are separate phases now (see finish_recording), so
     # "not recording" no longer means "ready to record".
     "finishing": False,
+    # ElevenLabs live slicer, if this recording is being chopped into 20s
+    # Scribe calls while the mic is still open. None for the local backend.
+    "capture": None,
 }
 # The thread running the current transcription, so shutdown can wait for it to
 # type what it has rather than exiting mid-dictation.
 finish_thread = None
-# How long that wait is allowed to take. Longer than the slowest path a
-# transcription can take (a 30s ElevenLabs timeout plus a 6s cleanup timeout)
-# and still well inside systemd's 90s TimeoutStopSec, so a stuck request costs
-# a slow stop rather than a SIGKILL.
-FINISH_JOIN_SECONDS = 45
+# How long that wait is allowed to take. A live ElevenLabs slice is 30s
+# worst case and cleanup scales up to 90s on a 10-minute dump; this sits
+# above that pair. systemd's default TimeoutStopSec is 90s, so a stuck
+# cleanup can still get SIGKILL on shutdown — better than blocking logout.
+FINISH_JOIN_SECONDS = 120
 hotkey_state = {
     "pressed": {},        # device path -> keycodes currently held on it
     "held": False,        # whether the ctrl+meta combo is currently active
@@ -350,6 +354,197 @@ def log(msg):
     print(f"[baatsun] {msg}", file=sys.stderr, flush=True)
 
 
+BYTES_PER_SECOND = int(SAMPLE_RATE) * 2
+
+
+def _wav_pcm_offset(path):
+    """Byte offset of PCM in a wav pw-record is still writing.
+
+    PipeWire writes a 44-byte RIFF header first, then PCM. If the file is
+    somehow raw, start at 0 rather than skipping 44 bytes of speech.
+    """
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(12)
+        if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+            return 44
+    except OSError:
+        pass
+    return 0
+
+
+def _write_pcm_wav(path, pcm):
+    with wave.open(path, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(int(SAMPLE_RATE))
+        out.writeframes(pcm)
+
+
+def _merge_scribe_usage(usages):
+    cost = 0.0
+    secs = 0.0
+    keyterms = 0
+    any_cost = False
+    for item in usages:
+        if not item:
+            continue
+        if item.get("cost") is not None:
+            cost += item["cost"]
+            any_cost = True
+        secs += item.get("secs") or 0
+        keyterms = max(keyterms, item.get("keyterms") or 0)
+    return {
+        "backend": "elevenlabs",
+        "model": baatsun_stt.MODEL_ID,
+        "secs": round(secs, 1),
+        "keyterms": keyterms,
+        "cost": cost if any_cost else None,
+    }
+
+
+class LiveScribe:
+    """Send 20s slices to ElevenLabs while the mic is still open.
+
+    The 30s Scribe timeout is sized for ~20s of wav. A 5–10 minute
+    brainstorm used to be one huge upload that died at 30s and typed
+    nothing. Reading the growing wav in CHUNK_SECONDS pieces means those
+    minutes are already transcribed by the time you release; finish waits
+    only on the leftover tail plus ChatGPT cleanup.
+    """
+
+    def __init__(self, wav_path):
+        self.path = wav_path
+        self.stop = threading.Event()
+        self.lock = threading.Lock()
+        self.offset = 0
+        self.jobs = []
+        self.thread = None
+        self.n = 0
+
+    def start(self):
+        self.thread = threading.Thread(
+            target=self._watch, name="scribe-live", daemon=True)
+        self.thread.start()
+
+    def abort(self):
+        self.stop.set()
+        if self.thread is not None:
+            self.thread.join(timeout=2)
+        with self.lock:
+            jobs = list(self.jobs)
+        for _thread, _box, chunk_path in jobs:
+            try:
+                os.remove(chunk_path)
+            except OSError:
+                pass
+
+    def collect(self):
+        """Join in-flight slices and the leftover tail. Returns (text, usage)."""
+        self.stop.set()
+        if self.thread is not None:
+            self.thread.join(timeout=5)
+        self._drain(final=True)
+        texts = []
+        usages = []
+        with self.lock:
+            jobs = list(self.jobs)
+        for thread, box, chunk_path in jobs:
+            thread.join()
+            if box.get("text"):
+                texts.append(box["text"].strip())
+            elif "text" in box:
+                log(f"elevenlabs chunk {box.get('n')} returned no text")
+            if box.get("usage"):
+                usages.append(box["usage"])
+            try:
+                os.remove(chunk_path)
+            except OSError:
+                pass
+        return " ".join(part for part in texts if part), _merge_scribe_usage(usages)
+
+    def _watch(self):
+        for _ in range(40):
+            if self.stop.is_set():
+                return
+            try:
+                if os.path.getsize(self.path) >= 44:
+                    self.offset = _wav_pcm_offset(self.path)
+                    break
+            except OSError:
+                pass
+            self.stop.wait(0.05)
+        while not self.stop.wait(0.25):
+            self._drain(final=False)
+
+    def _drain(self, final):
+        chunk = baatsun_stt.CHUNK_SECONDS * BYTES_PER_SECOND
+        to_send = []
+        with self.lock:
+            try:
+                size = os.path.getsize(self.path)
+            except OSError:
+                return
+            available = size - self.offset
+            while available >= chunk:
+                to_send.append((self.offset, chunk))
+                self.offset += chunk
+                available = size - self.offset
+            if final and available >= 1024:
+                to_send.append((self.offset, available))
+                self.offset += available
+        for offset, length in to_send:
+            self._emit(offset, length)
+
+    def _emit(self, offset, length):
+        try:
+            with open(self.path, "rb") as handle:
+                handle.seek(offset)
+                pcm = handle.read(length)
+        except OSError as exc:
+            log(f"elevenlabs chunk read failed: {exc}")
+            return
+        if len(pcm) < 1024:
+            return
+        fd, chunk_path = tempfile.mkstemp(prefix="baatsun-chunk-", suffix=".wav")
+        os.close(fd)
+        try:
+            _write_pcm_wav(chunk_path, pcm)
+        except OSError as exc:
+            log(f"elevenlabs chunk write failed: {exc}")
+            try:
+                os.remove(chunk_path)
+            except OSError:
+                pass
+            return
+        seconds = len(pcm) / float(BYTES_PER_SECOND)
+        box = {}
+        with self.lock:
+            self.n += 1
+            n = self.n
+            box["n"] = n
+            thread = threading.Thread(
+                target=self._run, args=(chunk_path, seconds, box, n),
+                name=f"scribe-chunk-{n}", daemon=True)
+            self.jobs.append((thread, box, chunk_path))
+        thread.start()
+        log(f"elevenlabs chunk {n} ({seconds:.0f}s) sent — transcribing while you talk")
+
+    def _run(self, chunk_path, seconds, box, n):
+        usage = {}
+        text = baatsun_stt.transcribe(
+            chunk_path, load_stt_api_key(),
+            language=WHISPER_LANGUAGE,
+            vocabulary=load_config().get("vocabulary") or "",
+            log=log, seconds=seconds, usage=usage)
+        box["text"] = text
+        box["usage"] = usage
+        if text:
+            log(f"elevenlabs chunk {n} ready")
+        else:
+            log(f"elevenlabs chunk {n} failed")
+
+
 def start_recording():
     fd, wav_path = tempfile.mkstemp(prefix="baatsun-", suffix=".wav")
     os.close(fd)
@@ -368,6 +563,14 @@ def start_recording():
     state["proc"] = proc
     state["wav_path"] = wav_path
     state["started"] = time.monotonic()
+    capture = None
+    if STT_BACKEND == "elevenlabs":
+        # Chop the growing wav into CHUNK_SECONDS slices and send each to
+        # Scribe now, so a 5–10 minute brainstorm is not one 30s timeout of
+        # a 19 MB upload after you let go.
+        capture = LiveScribe(wav_path)
+        capture.start()
+    state["capture"] = capture
     timer = threading.Timer(MAX_RECORDING_SECONDS, on_recording_timeout, args=(wav_path,))
     timer.daemon = True
     state["timer"] = timer
@@ -447,6 +650,7 @@ def maybe_clean(text, app, title):
         strength=cfg.get("cleanup_strength") or "grammar",
         usage=usage,
         surface=surface,
+        timeout=baatsun_cleanup.timeout_for(text),
     )
     # Empty when the request never got as far as an answer, which is a
     # different thing from a call that cost nothing.
@@ -461,25 +665,28 @@ def maybe_clean(text, app, title):
 def stop_recording():
     """Take the running recording off the state and hand back what finishes it.
 
-    Callers hold state_lock. Returns a (proc, wav_path, secs) tuple to pass to
-    finish_recording, or None when there was nothing running.
+    Callers hold state_lock. Returns a (proc, wav_path, secs, capture) tuple
+    to pass to finish_recording, or None when there was nothing running.
+    capture is a LiveScribe for ElevenLabs, or None for the local backend.
 
     This is deliberately only the cheap half. Everything slow — waiting on
     pw-record, the transcription itself, the cleanup request, typing the result
     — used to run here, inside state_lock, which is the same lock every key
-    event takes. A cloud transcription holds that for up to 30 seconds and a
-    cleanup call for 6 more, and for all of it the hotkey was dead and the
-    evdev threads were parked. Splitting the phases is what lets the slow half
-    run on its own thread with nothing held.
+    event takes. A cloud slice can still take up to 30 seconds and a long
+    cleanup up to 90, and for all of it the hotkey used to be dead. Splitting
+    the phases is what lets the slow half run on its own thread with nothing
+    held.
     """
     cancel_recording_timer()
     proc = state["proc"]
     wav_path = state["wav_path"]
     started = state["started"]
+    capture = state["capture"]
     state["recording"] = False
     state["proc"] = None
     state["wav_path"] = None
     state["started"] = None
+    state["capture"] = None
 
     if proc is None or wav_path is None:
         return None
@@ -490,7 +697,7 @@ def stop_recording():
     state["finishing"] = True
     # Monotonic, so a clock adjustment mid-dictation can't make this negative.
     secs = None if started is None else time.monotonic() - started
-    return proc, wav_path, secs
+    return proc, wav_path, secs, capture
 
 
 def start_finishing(pending):
@@ -515,15 +722,15 @@ def finish_recording(pending):
     recording from overlapping this one, and it is cleared here whatever
     happens — leaving it set would wedge the hotkey for good.
     """
-    proc, wav_path, secs = pending
+    proc, wav_path, secs, capture = pending
     try:
-        _finish_recording(proc, wav_path, secs)
+        _finish_recording(proc, wav_path, secs, capture)
     finally:
         with state_lock:
             state["finishing"] = False
 
 
-def _finish_recording(proc, wav_path, secs):
+def _finish_recording(proc, wav_path, secs, capture):
     proc.send_signal(signal.SIGINT)
     try:
         proc.wait(timeout=5)
@@ -541,6 +748,8 @@ def _finish_recording(proc, wav_path, secs):
     keep_wav = False
     try:
         if os.path.getsize(wav_path) < 1024:
+            if capture is not None:
+                capture.abort()
             log("recording too short, skipping")
             broadcast_state("idle", reason="too_short")
             return
@@ -552,11 +761,14 @@ def _finish_recording(proc, wav_path, secs):
         # local dictation you ever made at cloud rates the moment you switch.
         stt_usage = {}
         if STT_BACKEND == "elevenlabs":
-            text = baatsun_stt.transcribe(
-                wav_path, load_stt_api_key(),
-                language=WHISPER_LANGUAGE, vocabulary=vocabulary, log=log,
-                seconds=secs, usage=stt_usage)
-            if text is None:
+            if capture is not None:
+                text, stt_usage = capture.collect()
+            else:
+                text = baatsun_stt.transcribe(
+                    wav_path, load_stt_api_key(),
+                    language=WHISPER_LANGUAGE, vocabulary=vocabulary, log=log,
+                    seconds=secs, usage=stt_usage)
+            if not text:
                 keep_wav = True
                 log(f"the recording has been kept at {wav_path} — "
                     "dictate again, or transcribe it by hand")
@@ -624,9 +836,11 @@ def abandon_recording():
         cancel_recording_timer()
         proc = state["proc"]
         wav_path = state["wav_path"]
+        capture = state["capture"]
         state["recording"] = False
         state["proc"] = None
         state["wav_path"] = None
+        state["capture"] = None
         thread = finish_thread
 
     if thread is not None and thread.is_alive():
@@ -634,6 +848,9 @@ def abandon_recording():
         thread.join(timeout=FINISH_JOIN_SECONDS)
         if thread.is_alive():
             log("transcription did not finish in time — exiting anyway")
+
+    if capture is not None:
+        capture.abort()
 
     if proc is not None:
         proc.send_signal(signal.SIGINT)
@@ -1241,6 +1458,8 @@ def main():
         # and the whole point of this backend is not to pay for a model it
         # will never call.
         log("transcribing with ElevenLabs — the local model is not loaded")
+        log(f"long dictations are sent in {baatsun_stt.CHUNK_SECONDS}s slices "
+            "while you talk, so a 5–10 minute brainstorm is not one 30s timeout")
         log("your audio leaves this machine on every dictation; "
             f"switch 'stt_backend' in {CONFIG_PATH} back to 'local' to stop that")
     else:

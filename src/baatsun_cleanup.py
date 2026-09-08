@@ -21,12 +21,13 @@ import urllib.request
 import baatsun_context
 
 API_URL = "https://api.openai.com/v1/chat/completions"
-# Deliberately tight. The daemon calls this while holding state_lock, the same
-# lock the hotkey handler and shutdown path need, so this timeout is the worst
-# case for how long a stop can stall. A short dictation comes back in about a
-# second; anything past a few is a network problem, and giving up early to type
-# the raw transcript is the better answer than making the user wait.
-TIMEOUT = 6
+# Floor for a short clip. A 10-minute brainstorm is ~1500 words and needs more
+# than 6s for gpt-4o-mini to lay it out; timeout_for() scales up, and the
+# daemon passes that in. verify_key() keeps this floor so a Test click stays
+# snappy. Giving up still types the raw transcript.
+MIN_TIMEOUT = 6
+MAX_TIMEOUT = 90
+TIMEOUT = MIN_TIMEOUT
 
 # A proofreader, not an editor — at either strength. An early version of this
 # prompt asked for well-written prose and got it, by rewriting the speaker's
@@ -227,9 +228,20 @@ def build_system_prompt(vocabulary="", line_breaks=False, hinglish=False,
     return prompt
 
 
+def timeout_for(text):
+    """Seconds to wait for a cleanup request of `text`.
+
+    gpt-4o-mini is fast on a sentence and slow on a 10-minute dump. ~30 words
+    per extra second on top of the 6s floor, capped so a hung network cannot
+    park the finish thread for minutes.
+    """
+    words = len((text or "").split())
+    return max(MIN_TIMEOUT, min(MAX_TIMEOUT, 6 + words // 30))
+
+
 def clean(text, api_key, model="gpt-4o-mini", log=None, vocabulary="",
           line_breaks=False, hinglish=False, strength=GRAMMAR, usage=None,
-          surface=None):
+          surface=None, timeout=None):
     """Return the cleaned transcript, or None if it couldn't be produced.
 
     None is not an error the caller needs to handle beyond falling back to the
@@ -271,8 +283,10 @@ def clean(text, api_key, model="gpt-4o-mini", log=None, vocabulary="",
         },
     )
 
+    if timeout is None:
+        timeout = TIMEOUT
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             body = json.load(response)
         if usage is not None:
             _record_usage(usage, model, body.get("usage") or {})

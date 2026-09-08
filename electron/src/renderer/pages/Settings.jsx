@@ -190,7 +190,7 @@ export default function Settings() {
             label="Transcribe with"
             hint={
               cloud
-                ? 'More accurate and frees ~690 MB of memory, but your audio is sent to ElevenLabs on every dictation'
+                ? 'More accurate and frees ~690 MB of memory, but your audio is sent to ElevenLabs. Long dictations are sent in 20s slices while you talk.'
                 : 'Runs on your CPU. Nothing you say leaves this machine.'
             }
           >

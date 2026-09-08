@@ -25,16 +25,18 @@ import uuid
 API_URL = "https://api.elevenlabs.io/v1/speech-to-text"
 MODEL_ID = "scribe_v2"
 
-# Far longer than cleanup's 6s, because this call cannot be skipped: there is
-# no raw text to type if it gives up. A 20s dictation is ~640 KB of wav to
-# upload, and Scribe runs at ~60x realtime, so the network dominates. 30s
-# covers a slow uplink and still bounds how long a stop can stall.
-#
-# The daemon calls this while holding state_lock, so this is also the worst
-# case for how long the hotkey is unresponsive after you release it. That is a
-# real cost of the cloud backend and there is no way around it short of
-# restructuring the daemon's locking.
-TIMEOUT = 30
+# Floor for one Scribe request. A 20s slice is ~640 KB of wav; 30s covers a
+# sleepy uplink for that size. Longer one-shot uploads scale via timeout_for().
+# Live slicing (CHUNK_SECONDS) is what keeps a 5–10 minute brainstorm from
+# sitting behind a single request of that whole file — each slice uses this
+# floor, and the leftover after you release is the only one you wait on.
+MIN_TIMEOUT = 30
+TIMEOUT = MIN_TIMEOUT
+
+# How much audio one in-flight Scribe call covers. Matched to MIN_TIMEOUT: a
+# 20s slice still fits in 30s on a slow link, and a 10-minute dictation is
+# ~30 slices that run *while you talk* rather than one 19 MB upload afterwards.
+CHUNK_SECONDS = 20
 
 # API limits on keyterm prompting, applied here so a long vocabulary list gets
 # trimmed to what the endpoint accepts instead of failing the whole request.
@@ -62,6 +64,19 @@ KEYTERMS_PRICE_PER_HOUR = 0.05
 # models it rather than quietly reporting a fifth of the real cost.
 KEYTERMS_MINIMUM_BILLED_SECONDS = 20.0
 KEYTERMS_MINIMUM_THRESHOLD = 100
+
+
+def timeout_for(seconds):
+    """Seconds to wait for one Scribe request covering `seconds` of audio.
+
+    16-bit 16 kHz mono is ~32 KB/s. Budget a slow 64 KB/s uplink, 60× realtime
+    decode, and 15s of slack. A 20s live slice stays on MIN_TIMEOUT; a 10
+    minute file sent as one request (the fallback) gets ~5 minutes.
+    """
+    seconds = max(0.0, float(seconds or 0.0))
+    upload = (seconds * 16000 * 2) / (64 * 1024)
+    process = seconds / 60.0
+    return max(MIN_TIMEOUT, int(15 + upload + process + 0.999))
 
 
 def billed_seconds(seconds, keyterm_count=0):
@@ -104,7 +119,7 @@ def parse_keyterms(vocabulary):
 
 
 def transcribe(wav_path, api_key, language="en", vocabulary="", log=None,
-               seconds=None, usage=None):
+               seconds=None, usage=None, timeout=None):
     """Return the transcript text, or None if it couldn't be produced.
 
     language is passed through as language_code. Pinning it rather than letting
@@ -149,8 +164,10 @@ def transcribe(wav_path, api_key, language="en", vocabulary="", log=None,
         headers={"xi-api-key": api_key, "Content-Type": content_type},
     )
 
+    if timeout is None:
+        timeout = timeout_for(seconds)
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.load(response)
         if usage is not None:
             _record_usage(usage, seconds, len(keyterms))
