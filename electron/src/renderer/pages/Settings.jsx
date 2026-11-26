@@ -62,6 +62,24 @@ const BEAM_LABELS = {
   3: { label: 'Balanced' },
   5: { label: 'Most accurate', hint: 'A little slower per dictation' },
 }
+const CLEANUP_MODEL_LABELS = {
+  'gpt-6-luna': { label: 'GPT-6 Luna', hint: 'Recommended. Fast, inexpensive, and it reasons' },
+  'gpt-4o-mini': { label: 'GPT-4o mini', hint: 'Older and quickest; no reasoning' },
+  'gpt-4.1-mini': { label: 'GPT-4.1 mini', hint: 'Older; no reasoning' },
+  'gpt-4.1-nano': { label: 'GPT-4.1 nano', hint: 'Older and cheapest; no reasoning' },
+  'gpt-4o': { label: 'GPT-4o', hint: 'Older and much pricier' },
+  'gpt-4.1': { label: 'GPT-4.1', hint: 'Older and much pricier' },
+}
+// How hard a reasoning model thinks before correcting. Proofreading doesn't
+// need much; higher is slower and bills the thinking as output tokens.
+const REASONING_LABELS = {
+  none: { label: 'None', hint: 'Fastest. Answers without thinking first' },
+  low: { label: 'Low', hint: 'Quick, with a little thought' },
+  medium: { label: 'Medium', hint: 'The default. A good balance for proofreading' },
+  high: { label: 'High', hint: 'Slowest. Rarely needed for dictation' },
+}
+const isReasoningModel = (m) => /^(gpt-6|gpt-5|o1|o3|o4)/.test(m || '')
+
 const INSERT_LABELS = {
   paste: { label: 'Paste', hint: 'Instant, and your clipboard is put back' },
   type: { label: 'Type key by key', hint: 'Slower, especially for long text' },
@@ -242,7 +260,8 @@ const DESCRIBE = [
   ['cleanup_enabled', 'Clean up transcripts', onOff],
   ['cleanup_scope', 'Apply to', (v) => labelOf(SCOPE_LABELS, v)],
   ['cleanup_strength', 'Correction level', (v) => labelOf(STRENGTH_LABELS, v)],
-  ['cleanup_model', 'Cleanup model', String],
+  ['cleanup_model', 'Cleanup model', (v) => labelOf(CLEANUP_MODEL_LABELS, v)],
+  ['cleanup_reasoning', 'Reasoning', (v) => labelOf(REASONING_LABELS, v)],
   ['line_breaks', 'Break long text into paragraphs', onOff],
 ]
 
@@ -784,13 +803,25 @@ export default function Settings({ setGuard }) {
                   options={opts(choices.cleanup_strength || [], STRENGTH_LABELS)}
                 />
               </Field>
-              <Field label="Model">
+              <Field label="Model" hint="Only the transcript text is sent to OpenAI">
                 <Select
                   value={cfg.cleanup_model}
                   onChange={pick('cleanup_model')}
-                  options={opts(choices.cleanup_model || [])}
+                  options={opts(choices.cleanup_model || [], CLEANUP_MODEL_LABELS)}
                 />
               </Field>
+              {isReasoningModel(cfg.cleanup_model) && (
+                <Field
+                  label="Reasoning"
+                  hint="How much the model thinks before correcting. Higher is slower, and the thinking is billed"
+                >
+                  <Select
+                    value={cfg.cleanup_reasoning || 'medium'}
+                    onChange={pick('cleanup_reasoning')}
+                    options={opts(choices.cleanup_reasoning || ['none', 'low', 'medium', 'high'], REASONING_LABELS)}
+                  />
+                </Field>
+              )}
               <Field
                 label="Break long text into paragraphs"
                 hint="Never in chat apps, where Enter would send the message"

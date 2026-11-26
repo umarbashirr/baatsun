@@ -50,7 +50,7 @@ function Tile({ label, value, hint, tone }) {
 
 export default function Home({ daemon, onNavigate }) {
   const [name, setName] = useState('')
-  const [cleanupModel, setCleanupModel] = useState('gpt-4o-mini')
+  const [cleanupModel, setCleanupModel] = useState('gpt-6-luna')
   const stats = useMemo(
     () => computeStats(daemon.entries, cleanupModel),
     [daemon.entries, cleanupModel],
@@ -61,7 +61,7 @@ export default function Home({ daemon, onNavigate }) {
       .loadConfig()
       .then(({ config }) => {
         setName((config.display_name || '').trim())
-        setCleanupModel(config.cleanup_model || 'gpt-4o-mini')
+        setCleanupModel(config.cleanup_model || 'gpt-6-luna')
       })
       .catch(() => setName(''))
   }, [])

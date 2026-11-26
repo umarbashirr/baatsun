@@ -31,6 +31,7 @@ from baatsun_config import (
     ACTIVATION_CHOICES,
     CONFIG_PATH,
     DEFAULT_CLEANUP_MODEL,
+    DEFAULT_CLEANUP_REASONING,
     WHISPER_LANGUAGE,
     cleanup_ready,
     load_api_key,
@@ -733,8 +734,10 @@ def maybe_clean(text, app, title):
     # changes the shape and the register; the words stay the speaker's.
     surface = baatsun_context.surface(app, title)
     usage = {}
+    # Named apart from the module's global `model`, which is the whisper one.
+    cleanup_model = cfg.get("cleanup_model") or DEFAULT_CLEANUP_MODEL
     cleaned = baatsun_cleanup.clean(
-        text, api_key, cfg.get("cleanup_model") or "gpt-4o-mini", log=log,
+        text, api_key, cleanup_model, log=log,
         vocabulary=cfg.get("vocabulary") or "",
         line_breaks=(cfg.get("line_breaks", True)
                      and baatsun_context.allows_line_breaks(app, title)),
@@ -742,7 +745,8 @@ def maybe_clean(text, app, title):
         strength=cfg.get("cleanup_strength") or "grammar",
         usage=usage,
         surface=surface,
-        timeout=baatsun_cleanup.timeout_for(text),
+        timeout=baatsun_cleanup.timeout_for(text, cleanup_model),
+        reasoning=cfg.get("cleanup_reasoning") or DEFAULT_CLEANUP_REASONING,
     )
     # Empty when the request never got as far as an answer, which is a
     # different thing from a call that cost nothing.

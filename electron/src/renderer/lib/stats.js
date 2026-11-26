@@ -18,6 +18,7 @@ export const ACTIVITY_DAYS = 14
 // USD per million tokens, (input, output). A snapshot, like the Python one —
 // a model that isn't listed reports no cost rather than a guessed one.
 const PRICING = {
+  'gpt-6-luna': [0.1, 0.5],
   'gpt-4o-mini': [0.15, 0.6],
   'gpt-4o': [2.5, 10.0],
   'gpt-4.1': [2.0, 8.0],
@@ -40,7 +41,7 @@ export function prettyApp(app) {
   return base.charAt(0).toUpperCase() + base.slice(1)
 }
 
-export function computeStats(entries, cleanupModel = 'gpt-4o-mini') {
+export function computeStats(entries, cleanupModel = 'gpt-6-luna') {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
 
