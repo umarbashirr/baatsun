@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useDaemon } from './lib/useDaemon.js'
 import Home from './pages/Home.jsx'
 import Dictate from './pages/Dictate.jsx'
@@ -22,10 +22,112 @@ const PAGES = [
   { id: 'home', label: 'Home', Component: Home },
   { id: 'dictate', label: 'Dictate', Component: Dictate },
   { id: 'history', label: 'History', Component: History },
-  { id: 'costs', label: 'Costs', Component: Costs },
   { id: 'words', label: 'Words', Component: Words },
+  { id: 'costs', label: 'Costs', Component: Costs },
   { id: 'settings', label: 'Settings', Component: Settings },
 ]
+// The everyday pages sit at the top; Settings sits at the foot of the
+// sidebar, where people look for it and where it can't crowd the rest.
+const MAIN = PAGES.filter((p) => p.id !== 'settings')
+
+const HOTKEY_KEYS = {
+  'ctrl+super': ['Ctrl', 'Super'],
+  'ctrl+alt': ['Ctrl', 'Alt'],
+  'alt+super': ['Alt', 'Super'],
+  'ctrl+shift': ['Ctrl', 'Shift'],
+}
+
+function Keycaps({ keys }) {
+  return (
+    <span className="inline-flex items-center gap-1 align-middle">
+      {keys.map((k, i) => (
+        <React.Fragment key={k}>
+          {i > 0 && <span className="text-faint">+</span>}
+          <kbd className="rounded-[6px] border border-line bg-cream px-1.5 py-px font-sans text-[12px] font-medium text-ink shadow-[0_1px_0_var(--color-sand-2)]">
+            {k}
+          </kbd>
+        </React.Fragment>
+      ))}
+    </span>
+  )
+}
+
+/**
+ * What the daemon is doing right now, at the foot of the sidebar.
+ *
+ * Replaces a bare "Connected": the useful things to know at a glance are
+ * whether you can dictate, how (your actual hotkey), and whether it's
+ * listening. Clicking it opens Dictate.
+ */
+function StatusCard({ daemon, config, onOpen }) {
+  const state = daemon.state.state
+  const keys = HOTKEY_KEYS[config?.hotkey] || HOTKEY_KEYS['ctrl+super']
+  const toggle = config?.activation === 'toggle'
+
+  let dot = 'bg-good'
+  let title = 'Ready'
+  let body = (
+    <>
+      <Keycaps keys={keys} />
+      <span className="mt-1.5 block">{toggle ? 'Press' : 'Hold'} anywhere to dictate</span>
+    </>
+  )
+  if (!daemon.connected) {
+    dot = 'bg-faint'
+    title = 'Daemon offline'
+    body = 'Reconnecting…'
+  } else if (state === 'listening') {
+    dot = 'bg-live animate-live'
+    title = 'Listening'
+    body = toggle ? 'Press the hotkey again to stop' : 'Let go to transcribe'
+  } else if (state === 'transcribing') {
+    dot = null
+    title = 'Transcribing'
+    body = config?.stt_backend === 'elevenlabs' ? 'With ElevenLabs' : 'On your CPU'
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      // One height for every state, so Settings above it doesn't jump each
+      // time a dictation starts and ends.
+      className="min-h-[100px] w-full rounded-[18px] border border-line bg-card px-4 py-3 text-left shadow-[0_1px_3px_rgba(27,26,23,0.06)] transition-colors hover:border-sand-2"
+    >
+      <span className="flex items-center gap-2 text-[14px] font-medium text-ink">
+        {dot ? (
+          <span className={`h-2 w-2 rounded-full ${dot}`} />
+        ) : (
+          <span className="h-3 w-3 animate-spin rounded-full border-2 border-green/25 border-t-green" />
+        )}
+        {title}
+      </span>
+      <span className="mt-1.5 block text-[13px] leading-snug text-muted" aria-live="polite">
+        {body}
+      </span>
+    </button>
+  )
+}
+
+function NavItem({ id, label, current, onSelect, marker }) {
+  const on = id === current
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(id)}
+      aria-current={on ? 'page' : undefined}
+      className={`flex items-center gap-3 rounded-full px-4 py-2.5 text-[15px] transition-colors ${
+        on
+          ? 'bg-card font-medium text-ink shadow-[0_1px_3px_rgba(27,26,23,0.08)]'
+          : 'text-muted hover:bg-sand-2/60 hover:text-ink'
+      }`}
+    >
+      <Icon name={id} className={`h-[18px] w-[18px] ${on ? 'text-green' : ''}`} />
+      <span className="flex-1 text-left">{label}</span>
+      {marker}
+    </button>
+  )
+}
 
 const ICONS = {
   home: 'M3 10.5 12 3l9 7.5M5.5 9v11h13V9',
@@ -135,41 +237,63 @@ export default function App() {
   }
   const daemon = useDaemon()
   const active = PAGES.find((p) => p.id === page) || PAGES[0]
+
+  // The sidebar's status card shows the hotkey and activation the daemon is
+  // actually using: re-read when it reconnects (it restarts after those
+  // change) and when Settings says it saved.
+  const [config, setConfig] = useState(null)
+  useEffect(() => {
+    const read = () =>
+      window.baatsun
+        .loadConfig()
+        .then(({ config: c }) => setConfig(c))
+        .catch(() => {})
+    read()
+    window.addEventListener('baatsun:config-saved', read)
+    return () => window.removeEventListener('baatsun:config-saved', read)
+  }, [daemon.connected])
+
+  // Dictate carries the live state in the nav, so it shows from any page.
+  const recState = daemon.connected ? daemon.state.state : 'idle'
+  const dictateMarker =
+    recState === 'listening' ? (
+      <span className="animate-live h-2 w-2 rounded-full bg-live" aria-label="Listening" />
+    ) : recState === 'transcribing' ? (
+      <span
+        className="h-3 w-3 animate-spin rounded-full border-2 border-green/25 border-t-green"
+        aria-label="Transcribing"
+      />
+    ) : null
   const { Component } = active
 
   return (
     <div className="flex h-full">
-      <nav className="drag flex w-[212px] shrink-0 flex-col bg-sand">
-        <div className="flex h-14 items-center px-6 pt-1">
+      <nav className="drag flex w-[220px] shrink-0 flex-col bg-sand" aria-label="Pages">
+        {/* The mark is the product: the same dark pill that sits on your screen. */}
+        <div className="flex h-16 items-center gap-2.5 px-6 pt-1">
+          <span
+            aria-hidden="true"
+            className="h-[9px] w-[26px] rounded-full bg-[#1c1c1e] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]"
+          />
           <span className="font-serif text-[25px] leading-none text-ink">baatsun</span>
         </div>
 
-        <div className="no-drag flex flex-1 flex-col gap-1 px-3 py-4">
-          {PAGES.map(({ id, label }) => (
-            <button
+        <div className="no-drag flex flex-1 flex-col gap-1 px-3 pt-3">
+          {MAIN.map(({ id, label }) => (
+            <NavItem
               key={id}
-              type="button"
-              onClick={() => go(id)}
-              aria-current={id === page ? 'page' : undefined}
-              className={`flex items-center gap-3 rounded-full px-4 py-2.5 text-[15px] transition-colors ${
-                id === page
-                  ? 'bg-card font-medium text-ink shadow-[0_1px_3px_rgba(27,26,23,0.08)]'
-                  : 'text-muted hover:bg-sand-2/60 hover:text-ink'
-              }`}
-            >
-              <Icon name={id} className={`h-[18px] w-[18px] ${id === page ? 'text-green' : ''}`} />
-              {label}
-            </button>
+              id={id}
+              label={label}
+              current={page}
+              onSelect={go}
+              marker={id === 'dictate' ? dictateMarker : null}
+            />
           ))}
         </div>
 
-        <div className="no-drag px-6 pb-5 text-[13px] text-muted">
-          <span
-            className={`mr-2 inline-block h-2 w-2 rounded-full align-middle ${
-              daemon.connected ? 'bg-good' : 'bg-faint'
-            }`}
-          />
-          {daemon.connected ? 'Connected' : 'Reconnecting…'}
+        <div className="no-drag flex flex-col gap-3 px-3 pb-4">
+          <NavItem id="settings" label="Settings" current={page} onSelect={go} />
+          <StatusCard daemon={daemon} config={config} onOpen={() => go('dictate')} />
         </div>
       </nav>
 

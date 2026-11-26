@@ -571,6 +571,8 @@ export default function Settings({ setGuard }) {
       // Saved from here on, whatever the restart does.
       mark('save', 'done')
       await load()
+      // The sidebar shows the hotkey and activation; tell it they may have changed.
+      window.dispatchEvent(new Event('baatsun:config-saved'))
       if (restart) {
         const ok = await restartStep()
         if (ok !== true) return finish('partial', ok)
