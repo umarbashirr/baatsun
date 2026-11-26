@@ -1,6 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Card, Button, Field, Select, Toggle, TextInput, Section, Badge } from '../components/ui.jsx'
-import { useTimer } from '../lib/useTimer.js'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+} from '../components/dialog.jsx'
 
 // Changing any of these means the daemon has to come back up: they are read
 // once at startup, and stt_backend in particular decides whether the local
@@ -48,6 +55,160 @@ const BEAM_LABELS = {
 const INSERT_LABELS = {
   paste: { label: 'Paste', hint: 'Instant, and your clipboard is put back' },
   type: { label: 'Type key by key', hint: 'Slower, especially for long text' },
+}
+
+// A spinner that flashes for a frame and turns into a tick reads as a glitch.
+// Hold the working state long enough to be seen; real work is never slowed.
+const atLeast = (promise, ms = 450) =>
+  Promise.all([promise, new Promise((r) => setTimeout(r, ms))]).then(([v]) => v)
+
+function StepIcon({ status }) {
+  if (status === 'working') {
+    return <span className="h-[18px] w-[18px] animate-spin rounded-full border-2 border-green/20 border-t-green" />
+  }
+  if (status === 'done' || status === 'failed') {
+    return (
+      <span
+        className={`grid h-[20px] w-[20px] place-items-center rounded-full ${
+          status === 'done' ? 'bg-green text-cream' : 'bg-live text-white'
+        }`}
+      >
+        <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d={status === 'done' ? 'M20 6 9 17l-5-5' : 'M18 6 6 18M6 6l12 12'} />
+        </svg>
+      </span>
+    )
+  }
+  return <span className="mx-[5px] h-2.5 w-2.5 rounded-full border-2 border-sand-2" />
+}
+
+const COPY = {
+  save: {
+    working: (restart) => ({
+      title: 'Saving your settings',
+      body: restart
+        ? 'Then the daemon restarts to pick them up. Dictation pauses for a moment.'
+        : 'This only takes a moment.',
+    }),
+    done: (restart) => ({
+      title: 'Settings saved',
+      body: restart
+        ? 'The daemon restarted and is running with your new settings.'
+        : 'Your changes take effect from your next dictation.',
+    }),
+    partial: (_, error) => ({
+      title: 'Saved, but the daemon didn’t restart',
+      body: 'Your changes are saved, but they won’t apply until the daemon restarts.',
+      detail: error,
+    }),
+    error: (_, error) => ({
+      title: 'Couldn’t save your settings',
+      body: 'Your changes are still here, so you can try again.',
+      detail: error,
+    }),
+  },
+  restart: {
+    working: () => ({ title: 'Restarting the daemon', body: 'Dictation pauses for a moment.' }),
+    done: () => ({ title: 'Daemon restarted', body: 'It’s running again and ready for your next dictation.' }),
+    error: (_, error) => ({
+      title: 'The daemon didn’t restart',
+      body: 'Dictation won’t work until it’s running again.',
+      detail: error,
+    }),
+  },
+}
+
+/**
+ * Saving and restarting, shown as a dialog in the middle of the window.
+ *
+ * Each step gets its own line so a two-part save (write the config, restart
+ * the daemon) says which part is happening, and which part failed. While
+ * anything is running the dialog can't be dismissed: closing it would hide
+ * work that is still going on, not stop it.
+ */
+function OperationDialog({ op, onClose, onRetry, onRetryRestart, returnFocus }) {
+  const working = op && !op.outcome
+  const phase = op ? op.outcome || 'working' : 'working'
+  // Once the settings are written, a save that is still working is only
+  // restarting the daemon (including a retry), so say that.
+  const restarting =
+    op && phase === 'working' && op.kind === 'save' && op.steps[0].status === 'done'
+  const copy = !op
+    ? { title: '', body: '' }
+    : restarting
+      ? COPY.restart.working()
+      : COPY[op.kind][phase](op.restart, op.error || '')
+  const keepOpen = (e) => working && e.preventDefault()
+
+  return (
+    <Dialog open={!!op} onOpenChange={(open) => !open && !working && onClose()}>
+      <DialogContent
+        onEscapeKeyDown={keepOpen}
+        onPointerDownOutside={keepOpen}
+        onInteractOutside={keepOpen}
+        // Radix returns focus to whatever opened the dialog, but the Save
+        // button that did is gone once nothing is left to save. Fall back to
+        // the page, so keyboard users land where they were rather than at
+        // the top of the window.
+        onCloseAutoFocus={(e) => {
+          e.preventDefault()
+          returnFocus?.()
+        }}
+        aria-busy={working}
+      >
+        <DialogHeader>
+          <DialogTitle>{copy.title}</DialogTitle>
+          <DialogDescription>{copy.body}</DialogDescription>
+          {copy.detail && (
+            <p className="selectable mt-1 rounded-[12px] bg-live/8 px-3.5 py-2.5 text-[13.5px] leading-snug text-live">
+              {copy.detail}
+            </p>
+          )}
+        </DialogHeader>
+
+        {op && (
+          <ol className="mt-6 flex flex-col gap-3 rounded-[16px] bg-cream px-4 py-3.5" aria-live="polite">
+            {op.steps.map((step) => (
+              <li key={step.id} className="flex items-center gap-3 text-[14.5px]">
+                <span className="grid h-5 w-5 place-items-center">
+                  <StepIcon status={step.status} />
+                </span>
+                <span className={step.status === 'pending' ? 'text-faint' : 'text-ink'}>{step.label}</span>
+                <span className="sr-only">
+                  {{ pending: 'waiting', working: 'in progress', done: 'done', failed: 'failed' }[step.status]}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+
+        {!working && (
+          <DialogFooter>
+            {phase === 'done' && (
+              <Button variant="primary" onClick={onClose} autoFocus>
+                Done
+              </Button>
+            )}
+            {phase === 'error' && (
+              <Button variant="primary" onClick={onRetry} autoFocus>
+                Try again
+              </Button>
+            )}
+            {phase === 'partial' && (
+              <Button variant="primary" onClick={onRetryRestart} autoFocus>
+                Try restart again
+              </Button>
+            )}
+            {phase !== 'done' && (
+              <Button variant="ghost" onClick={onClose}>
+                Close
+              </Button>
+            )}
+          </DialogFooter>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 const opts = (values, labels) =>
@@ -137,11 +298,19 @@ export default function Settings() {
   const [openaiKey, setOpenaiKey] = useState(null)
   const [sttKey, setSttKey] = useState(null)
   const [loadError, setLoadError] = useState('')
-  const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
-  // Both toast sites share one timer, so a restart toast can't be cleared
-  // early by a save toast's leftover timeout.
-  const clearToastLater = useTimer()
+  // The save/restart dialog: { kind, restart, steps, outcome, error } or null.
+  const [op, setOp] = useState(null)
+  const pageRef = useRef(null)
+  const openerRef = useRef(null)
+  const startOp = (next) => {
+    if (!op) openerRef.current = document.activeElement
+    setOp(next)
+  }
+  const returnFocus = () => {
+    const el = openerRef.current
+    ;(el && el.isConnected ? el : pageRef.current)?.focus({ preventScroll: true })
+  }
 
   const load = () =>
     window.baatsun
@@ -190,42 +359,78 @@ export default function Settings() {
 
   const set = (key) => (value) => setCfg((prev) => ({ ...prev, [key]: value }))
 
+  const mark = (id, status) =>
+    setOp((o) => o && { ...o, steps: o.steps.map((st) => (st.id === id ? { ...st, status } : st)) })
+  const finish = (outcome, error = '') => setOp((o) => o && { ...o, outcome, error })
+
+  const restartStep = async () => {
+    mark('restart', 'working')
+    try {
+      await atLeast(window.baatsun.restartDaemon())
+      mark('restart', 'done')
+      return true
+    } catch (err) {
+      mark('restart', 'failed')
+      return err.message
+    }
+  }
+
   const save = async () => {
+    const restart = needsRestart
+    startOp({
+      kind: 'save',
+      restart,
+      outcome: null,
+      error: '',
+      steps: [
+        { id: 'save', label: 'Save settings', status: 'working' },
+        ...(restart ? [{ id: 'restart', label: 'Restart the daemon', status: 'pending' }] : []),
+      ],
+    })
     setSaving(true)
     try {
       try {
-        await window.baatsun.saveConfig({
-          config: cfg,
-          openaiKey: openaiKey === null ? undefined : openaiKey,
-          sttKey: sttKey === null ? undefined : sttKey,
-        })
+        await atLeast(
+          window.baatsun.saveConfig({
+            config: cfg,
+            openaiKey: openaiKey === null ? undefined : openaiKey,
+            sttKey: sttKey === null ? undefined : sttKey,
+          }),
+        )
       } catch (err) {
-        setToast(`Could not save: ${err.message}`)
+        mark('save', 'failed')
+        finish('error', err.message)
         return
       }
       // Saved from here on, whatever the restart does.
-      const restart = needsRestart
+      mark('save', 'done')
       await load()
       if (restart) {
-        try {
-          await window.baatsun.restartDaemon()
-          setToast('Saved — daemon restarted')
-        } catch (err) {
-          setToast(`Saved, but the daemon did not restart: ${err.message}`)
-        }
-      } else {
-        setToast('Saved — in effect from your next dictation')
+        const ok = await restartStep()
+        if (ok !== true) return finish('partial', ok)
       }
+      finish('done')
     } finally {
       setSaving(false)
-      clearToastLater(() => setToast(''), 4000)
     }
+  }
+
+  const restartOnly = async () => {
+    startOp({
+      kind: 'restart',
+      restart: true,
+      outcome: null,
+      error: '',
+      steps: [{ id: 'restart', label: 'Restart the daemon', status: 'pending' }],
+    })
+    const ok = await restartStep()
+    finish(ok === true ? 'done' : 'error', ok === true ? '' : ok)
   }
 
   const cloud = cfg.stt_backend === 'elevenlabs'
 
   return (
-    <div className="mx-auto max-w-[760px] pb-24">
+    <div ref={pageRef} tabIndex={-1} className="mx-auto max-w-[760px] pb-6 outline-none">
       <Section title="Profile">
         <Card>
           <Field label="Display name" hint="What the Home page greets you by">
@@ -443,55 +648,55 @@ export default function Settings() {
       <Section title="Daemon">
         <Card>
           <Field label="baatsun.service" hint="Restart if dictation stops responding">
-            <Button
-              onClick={async () => {
-                try {
-                  await window.baatsun.restartDaemon()
-                  setToast('Daemon restarted')
-                } catch (err) {
-                  setToast(err.message)
-                }
-                clearToastLater(() => setToast(''), 4000)
-              }}
-            >
-              Restart
-            </Button>
+            <Button onClick={restartOnly}>Restart</Button>
           </Field>
         </Card>
       </Section>
 
       {/* Pinned rather than inline: Settings is longer than the window, and a
-          save button that scrolls out of reach is a save button people miss. */}
-      {(dirty || toast) && (
-        <div className="animate-rise fixed bottom-0 left-[196px] right-0 border-t border-line bg-cream/95 px-8 py-3 backdrop-blur">
-          <div className="mx-auto flex max-w-[760px] items-center justify-between gap-4">
-            <p className="text-[13.5px] text-muted">
-              {toast ||
-                (needsRestart
-                  ? 'Saving will restart the daemon — dictation pauses for a moment.'
-                  : 'Unsaved changes')}
+          save button that scrolls out of reach is a save button people miss.
+          Sticky, not fixed: the page wrapper animates its transform on entry,
+          which makes it the containing block for fixed children, so a fixed
+          bar was offset by the sidebar's width a second time. */}
+      {dirty && (
+        <div className="animate-rise sticky bottom-4 z-10 mt-8">
+          <div className="flex items-center justify-between gap-4 rounded-full border border-line bg-card/95 py-2 pl-6 pr-2 shadow-[0_14px_36px_-14px_rgba(27,26,23,0.3)] backdrop-blur">
+            <p className="text-[14.5px] leading-snug text-muted">
+              {needsRestart
+                ? 'Saving will restart the daemon, so dictation pauses for a moment.'
+                : 'You have unsaved changes.'}
             </p>
-            {dirty && (
-              <div className="flex gap-2">
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setCfg(initial)
-                    setOpenaiKey(null)
-                    setSttKey(null)
-                  }}
-                  disabled={saving}
-                >
-                  Discard
-                </Button>
-                <Button variant="primary" onClick={save} disabled={saving}>
-                  {saving ? 'Saving…' : 'Save changes'}
-                </Button>
-              </div>
-            )}
+            <div className="flex gap-2">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setCfg(initial)
+                  setOpenaiKey(null)
+                  setSttKey(null)
+                }}
+                disabled={saving}
+              >
+                Discard
+              </Button>
+              <Button variant="primary" onClick={save} disabled={saving}>
+                Save changes
+              </Button>
+            </div>
           </div>
         </div>
       )}
+
+      <OperationDialog
+        op={op}
+        returnFocus={returnFocus}
+        onClose={() => setOp(null)}
+        onRetry={() => (op?.kind === 'restart' ? restartOnly() : save())}
+        onRetryRestart={async () => {
+          setOp((o) => o && { ...o, outcome: null, error: '' })
+          const ok = await restartStep()
+          finish(ok === true ? 'done' : 'partial', ok === true ? '' : ok)
+        }}
+      />
     </div>
   )
 }

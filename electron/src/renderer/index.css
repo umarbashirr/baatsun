@@ -169,11 +169,56 @@ body {
   }
 }
 
+/* Dialogs: the overlay fades, the panel rises a touch from 96%. Modals are
+   not anchored to a trigger, so they scale from their own centre. Tailwind's
+   translate utilities use the separate `translate` property, so animating
+   `transform` here doesn't fight the centring. */
+.dialog-overlay[data-state='open'] {
+  animation: fade-in 200ms var(--ease-out);
+}
+.dialog-overlay[data-state='closed'] {
+  animation: fade-out 150ms var(--ease-out) forwards;
+}
+.dialog-content[data-state='open'] {
+  animation: dialog-in 240ms var(--ease-out);
+}
+.dialog-content[data-state='closed'] {
+  animation: dialog-out 150ms var(--ease-out) forwards;
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+@keyframes dialog-out {
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-live,
   .animate-rise,
   .select-content[data-state='open'],
   .select-content[data-state='closed'] {
     animation: none;
+  }
+  .dialog-content[data-state='open'] {
+    animation: fade-in 150ms ease;
+  }
+  .dialog-content[data-state='closed'] {
+    animation: fade-out 120ms ease forwards;
   }
 }
