@@ -15,31 +15,46 @@ const RESTART_KEYS = [
   'hinglish',
 ]
 
+// Each choice is { label, hint?, keys? }. The label is what the closed control
+// shows, so it stays short; the hint explains the choice in the open list.
 const HOTKEY_LABELS = {
-  'ctrl+super': 'Ctrl + Super',
-  'ctrl+alt': 'Ctrl + Alt',
-  'alt+super': 'Alt + Super',
-  'ctrl+shift': 'Ctrl + Shift',
+  'ctrl+super': { label: 'Ctrl + Super', keys: ['Ctrl', 'Super'], hint: 'The default' },
+  'ctrl+alt': { label: 'Ctrl + Alt', keys: ['Ctrl', 'Alt'] },
+  'alt+super': { label: 'Alt + Super', keys: ['Alt', 'Super'] },
+  'ctrl+shift': { label: 'Ctrl + Shift', keys: ['Ctrl', 'Shift'] },
 }
 const ACTIVATION_LABELS = {
-  hold: 'Hold to talk',
-  toggle: 'Press to start, press to stop',
-  hybrid: 'Tap or hold',
+  hold: { label: 'Hold to talk', hint: 'Speak while the keys are held, let go to finish' },
+  toggle: { label: 'Press to start and stop', hint: 'Press once to start, again to finish' },
+  hybrid: { label: 'Tap or hold', hint: 'A quick tap toggles; holding works like hold to talk' },
 }
 const BACKEND_LABELS = {
-  local: 'This machine (offline)',
-  elevenlabs: 'ElevenLabs Scribe v2 (cloud)',
+  local: { label: 'This machine', hint: 'Offline. Your audio never leaves the computer' },
+  elevenlabs: { label: 'ElevenLabs Scribe v2', hint: 'Cloud. More accurate, but sends your audio' },
 }
-const SCOPE_LABELS = { prose: 'Prose windows only', all: 'Everything I dictate' }
-const STRENGTH_LABELS = { grammar: 'Proofread only', natural: 'Proofread + light grammar' }
-const BEAM_LABELS = { 1: 'Fastest (least accurate)', 3: 'Balanced', 5: 'Most accurate' }
+const SCOPE_LABELS = {
+  prose: { label: 'Prose windows only', hint: 'Terminals and code editors stay verbatim' },
+  all: { label: 'Everything I dictate', hint: 'Including terminals and editors' },
+}
+const STRENGTH_LABELS = {
+  grammar: { label: 'Proofread only', hint: 'Punctuation, fillers and stutters' },
+  natural: { label: 'Proofread + light grammar', hint: 'Also fixes small grammar slips' },
+}
+const BEAM_LABELS = {
+  1: { label: 'Fastest', hint: 'Least accurate' },
+  3: { label: 'Balanced' },
+  5: { label: 'Most accurate', hint: 'A little slower per dictation' },
+}
 const INSERT_LABELS = {
-  paste: 'Paste (instant, restores your clipboard)',
-  type: 'Type key by key (slower)',
+  paste: { label: 'Paste', hint: 'Instant, and your clipboard is put back' },
+  type: { label: 'Type key by key', hint: 'Slower, especially for long text' },
 }
 
 const opts = (values, labels) =>
-  values.map((v) => ({ value: v, label: labels?.[v] || v }))
+  values.map((v) => {
+    const l = labels?.[v]
+    return typeof l === 'object' ? { value: v, ...l } : { value: v, label: l || v }
+  })
 
 /**
  * A key box with its own Test button.
@@ -290,8 +305,12 @@ export default function Settings() {
               value={cfg.hinglish ? 'hinglish' : 'en'}
               onChange={(v) => set('hinglish')(v === 'hinglish')}
               options={[
-                { value: 'en', label: 'English' },
-                { value: 'hinglish', label: 'English + Hinglish' },
+                { value: 'en', label: 'English', hint: 'English-only model, the fastest' },
+                {
+                  value: 'hinglish',
+                  label: 'English + Hinglish',
+                  hint: 'Hears Hindi and Urdu words; the output stays English',
+                },
               ]}
             />
           </Field>
@@ -303,7 +322,7 @@ export default function Settings() {
                 onChange={(v) => set('beam_size')(Number(v))}
                 options={(choices.beam_size || [1, 3, 5]).map((v) => ({
                   value: String(v),
-                  label: BEAM_LABELS[v] || String(v),
+                  ...(BEAM_LABELS[v] || { label: String(v) }),
                 }))}
               />
             </Field>
@@ -332,6 +351,7 @@ export default function Settings() {
                 {
                   value: '',
                   label: `${cfg.hinglish ? multilingualModel : defaultModel} (recommended)`,
+                  hint: 'Picked for the language you set above',
                 },
                 ...opts(choices.model || []),
               ]}

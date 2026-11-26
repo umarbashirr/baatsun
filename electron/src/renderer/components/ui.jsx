@@ -1,4 +1,11 @@
-import React from 'react'
+import React, { useId } from 'react'
+import {
+  Select as SelectRoot,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from './select.jsx'
 
 /**
  * The small shared vocabulary the pages are built from.
@@ -69,38 +76,75 @@ export function Button({
 }
 
 export function Field({ label, hint, children, htmlFor }) {
+  // Tie the label to its control. Without an id the control had no accessible
+  // name at all: a screen reader announced "button" or "combo box" and nothing
+  // about what it set. Clicking the label now also opens or focuses it.
+  const autoId = useId()
+  const only = React.Children.count(children) === 1 && React.isValidElement(children)
+  const id = htmlFor || (only ? children.props.id || autoId : undefined)
+  const control = only && !htmlFor && !children.props.id ? React.cloneElement(children, { id }) : children
   return (
     <div className="flex flex-col gap-2 border-b border-line px-5 py-4 last:border-0 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
       <div className="min-w-0 sm:max-w-[58%]">
-        <label htmlFor={htmlFor} className="block text-[15px] font-medium text-ink">
+        <label htmlFor={id} className="block text-[15px] font-medium text-ink">
           {label}
         </label>
         {hint && <p className="mt-0.5 text-[13.5px] leading-snug text-muted">{hint}</p>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="shrink-0">{control}</div>
     </div>
   )
 }
 
-export function Select({ value, onChange, options, className = '' }) {
+// Radix reserves the empty string (it means "no selection"), but settings use
+// '' for "the default", e.g. the recommended model. Map it to a sentinel and
+// back so callers never see the difference.
+const EMPTY = '__baatsun_default__'
+const toItem = (v) => (v === '' || v == null ? EMPTY : String(v))
+
+/** Keycaps for a hotkey option, so "Ctrl + Super" reads as keys, not prose. */
+function Keys({ keys }) {
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={`h-10 min-w-[200px] rounded-full border border-line bg-cream px-4 text-[14px] text-ink outline-none transition-colors hover:border-sand-2 focus:border-green ${className}`}
-    >
-      {options.map(({ value: v, label }) => (
-        <option key={v} value={v} className="bg-card">
-          {label}
-        </option>
+    <span className="inline-flex items-center gap-1">
+      {keys.map((k, i) => (
+        <React.Fragment key={k}>
+          {i > 0 && <span className="text-faint">+</span>}
+          <kbd className="rounded-md border border-line bg-card px-1.5 py-px font-sans text-[12.5px] font-medium text-ink shadow-[0_1px_0_var(--color-sand-2)]">
+            {k}
+          </kbd>
+        </React.Fragment>
       ))}
-    </select>
+    </span>
   )
 }
 
-export function Toggle({ checked, onChange, label }) {
+/**
+ * The app's select: shadcn/ui's Select (Radix underneath) with the same props
+ * as the native one it replaces. Options are { value, label, hint?, keys? };
+ * the hint shows under the option in the open list only, so the closed
+ * control stays a clean, short label.
+ */
+export function Select({ value, onChange, options, className = '', id, ...rest }) {
+  return (
+    <SelectRoot value={toItem(value)} onValueChange={(v) => onChange(v === EMPTY ? '' : v)}>
+      <SelectTrigger id={id} className={className} {...rest}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((o) => (
+          <SelectItem key={toItem(o.value)} value={toItem(o.value)} hint={o.hint}>
+            {o.keys ? <Keys keys={o.keys} /> : o.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </SelectRoot>
+  )
+}
+
+export function Toggle({ checked, onChange, label, id }) {
   return (
     <button
+      id={id}
       type="button"
       role="switch"
       aria-checked={checked}
