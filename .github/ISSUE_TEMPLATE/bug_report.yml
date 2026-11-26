@@ -1,0 +1,72 @@
+name: Bug report
+description: Something doesn't work the way the README says it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. First check [Troubleshooting](https://github.com/umarbashirr/baatsun#troubleshooting), which covers most first-install problems.
+        **Security issue?** Don't file it here. See [SECURITY.md](https://github.com/umarbashirr/baatsun/security/policy).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+      placeholder: Held Ctrl+Super in Firefox, spoke, released. The pill showed the spinner, but no text appeared.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Baatsun version
+      description: "`dpkg -s baatsun | grep Version`, or the commit hash for a source install"
+      placeholder: 0.11.0
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - install.sh / .deb
+        - From source (install-local.sh)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Distro and version
+      placeholder: Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: desktop
+    attributes:
+      label: Desktop and session type
+      description: "`echo $XDG_CURRENT_DESKTOP $XDG_SESSION_TYPE`"
+      placeholder: GNOME wayland
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Transcription backend
+      options:
+        - Local (faster-whisper)
+        - ElevenLabs
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Daemon log
+      description: |
+        Output of `journalctl --user -u baatsun.service -n 100 --no-pager` taken right after the problem.
+        The log contains word counts, not what you said, unless you set `BAATSUN_LOG_TRANSCRIPTS=1`. Remove anything private before you paste it.
+      render: text
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, the app window's output from running `baatsun-gui` in a terminal, the ydotool version, and so on.

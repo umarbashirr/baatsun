@@ -2,13 +2,30 @@
 
 *बात + सुन — "talk" + "listen".*
 
-A voice dictation tool for Linux: **hold Ctrl+Super (Windows key) anywhere**,
-speak, **release** — it transcribes locally (faster-whisper, CPU) and pastes
-the text into whatever window or input box is focused.
+[![Latest release](https://img.shields.io/github/v/release/umarbashirr/baatsun?color=ef9f4e)](https://github.com/umarbashirr/baatsun/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/umarbashirr/baatsun?color=ef9f4e)](LICENSE)
+[![Platform: Linux](https://img.shields.io/badge/platform-Linux-informational)](#requirements)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-3ecf8e)](CONTRIBUTING.md)
+
+**[Website](https://umarbashirr.github.io/baatsun/)** ·
+**[Install](#quick-install-ubuntudebian)** ·
+**[Contributing](CONTRIBUTING.md)** ·
+**[Security](SECURITY.md)**
+
+Free and open-source voice dictation for Linux: **hold Ctrl+Super (Windows
+key) anywhere**, speak, **release** — it transcribes locally
+(faster-whisper, CPU) and pastes the text into whatever window or input box
+is focused.
 Transcription runs fully offline by default; nothing you say ever leaves your
 machine unless you opt in — to the OpenAI cleanup pass, which sends the
 transcript text only, or to the ElevenLabs transcription backend, which sends
 the audio itself.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/umarbashirr/baatsun/main/install.sh | bash
+```
+
+![The Baatsun app window: Home page with dictation stats and a 14-day activity chart](docs/assets/home.png)
 
 ## Features
 
@@ -162,7 +179,7 @@ src/baatsun_cleanup.py (stdlib only — urllib, no new venv dependency)
    never cost you a dictation.
 
 electron/ (the app window — Electron + React, replaces the old GTK window)
-   Five pages behind a sidebar, in a frameless window that draws its own
+   Six pages behind a sidebar, in a frameless window that draws its own
    header. The daemon, the pill and the tray are untouched by this: the pill
    in particular cannot be Electron, because it needs wlr-layer-shell (overlay
    layer, no keyboard focus) to sit above fullscreen windows without stealing
@@ -805,9 +822,13 @@ before trusting it with anything sensitive.
 
 ## Roadmap / known limitations
 
-- Swapping in a cloud STT API (OpenAI/Deepgram) only touches
-  `stop_recording_and_transcribe()` in `src/baatsun.py` — the daemon/hotkey/
+- Another cloud STT API (OpenAI, Deepgram) would sit alongside ElevenLabs in
+  `src/baatsun_stt.py` and be picked by `stt_backend` — the daemon/hotkey/
   ydotool plumbing stays the same.
+- Only an amd64 `.deb` is published. Other architectures and distros build
+  from source; packaging for Fedora, Arch, Flatpak or Nix would be a welcome
+  contribution.
+- There is no automated test suite yet.
 - The hotkey combo is configurable (Settings panel or
   `~/.config/baatsun/config.json`) but limited to four curated pairs
   (`baatsun_config.HOTKEY_CHOICES`) rather than an arbitrary key — capturing
@@ -822,15 +843,30 @@ before trusting it with anything sensitive.
 
 ## Contributing
 
-Issues and pull requests are welcome. If you're proposing a larger change
-(e.g. a new backend, a different capture mechanism), please open an issue
-first to discuss the approach — see the Architecture section above for how
-the pieces fit together.
+Baatsun is open source and contributions are welcome. Bug reports from
+distros and desktops other than Ubuntu/GNOME, packaging, new transcription
+backends and docs fixes are especially useful.
+
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup, the checks to run
+  before a PR, and the privacy ground rules every change follows.
+- [Report a bug](https://github.com/umarbashirr/baatsun/issues/new?template=bug_report.yml)
+  or [suggest a feature](https://github.com/umarbashirr/baatsun/issues/new?template=feature_request.yml).
+  For a larger change (a new backend, a different capture mechanism), open an
+  issue first to discuss the approach. The [Architecture](#architecture)
+  section above shows how the pieces fit together.
+- Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Security
+
+Baatsun reads raw keyboard input, so security reports matter. Please report
+vulnerabilities privately as described in [SECURITY.md](SECURITY.md), not in a
+public issue.
 
 ## Author
 
-Umar Bashir Rather
+Umar Bashir Rather, with [contributors](https://github.com/umarbashirr/baatsun/graphs/contributors).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). You're free to use, modify and redistribute Baatsun, including
+commercially, as long as the copyright notice is kept.
