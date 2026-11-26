@@ -46,13 +46,12 @@ export function Section({ title, description, action, children }) {
   )
 }
 
-export function Button({
-  variant = 'default',
-  size = 'md',
-  className = '',
-  children,
-  ...rest
-}) {
+// forwardRef so Radix can focus it when used through asChild (AlertDialog's
+// Cancel and Action take focus by ref).
+export const Button = React.forwardRef(function Button(
+  { variant = 'default', size = 'md', className = '', children, ...rest },
+  ref,
+) {
   const variants = {
     default: 'bg-card text-ink border border-line hover:bg-sand hover:border-sand-2',
     primary: 'bg-green text-cream font-semibold hover:bg-green-2 border border-transparent',
@@ -66,6 +65,7 @@ export function Button({
   }
   return (
     <button
+      ref={ref}
       type="button"
       className={`no-drag inline-flex items-center justify-center gap-2 rounded-full font-medium transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40 ${variants[variant]} ${sizes[size]} ${className}`}
       {...rest}
@@ -73,7 +73,7 @@ export function Button({
       {children}
     </button>
   )
-}
+})
 
 export function Field({ label, hint, children, htmlFor }) {
   // Tie the label to its control. Without an id the control had no accessible

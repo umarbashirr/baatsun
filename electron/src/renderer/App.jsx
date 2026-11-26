@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import { useDaemon } from './lib/useDaemon.js'
 import Home from './pages/Home.jsx'
 import Dictate from './pages/Dictate.jsx'
@@ -6,7 +6,17 @@ import History from './pages/History.jsx'
 import Costs from './pages/Costs.jsx'
 import Words from './pages/Words.jsx'
 import Settings from './pages/Settings.jsx'
-import { Badge } from './components/ui.jsx'
+import { Badge, Button } from './components/ui.jsx'
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from './components/alert-dialog.jsx'
 
 const PAGES = [
   { id: 'home', label: 'Home', Component: Home },
@@ -114,6 +124,15 @@ function TitleBar({ title, state, connected }) {
 
 export default function App() {
   const [page, setPage] = useState('home')
+  // A page with unsaved work (Settings) registers a check here; switching
+  // pages asks first rather than silently throwing the work away.
+  const guard = useRef(null)
+  const [leaving, setLeaving] = useState(null)
+  const go = (id) => {
+    if (id === page) return
+    if (guard.current?.()) setLeaving(id)
+    else setPage(id)
+  }
   const daemon = useDaemon()
   const active = PAGES.find((p) => p.id === page) || PAGES[0]
   const { Component } = active
@@ -130,7 +149,7 @@ export default function App() {
             <button
               key={id}
               type="button"
-              onClick={() => setPage(id)}
+              onClick={() => go(id)}
               aria-current={id === page ? 'page' : undefined}
               className={`flex items-center gap-3 rounded-full px-4 py-2.5 text-[15px] transition-colors ${
                 id === page
@@ -157,9 +176,36 @@ export default function App() {
       <main className="flex min-w-0 flex-1 flex-col">
         <TitleBar title={active.label} state={daemon.state} connected={daemon.connected} />
         <div key={page} className="animate-rise flex-1 overflow-y-auto px-8 pb-10 pt-4">
-          <Component daemon={daemon} onNavigate={setPage} />
+          <Component daemon={daemon} onNavigate={go} setGuard={(fn) => (guard.current = fn)} />
         </div>
       </main>
+
+      <AlertDialog open={!!leaving} onOpenChange={(open) => !open && setLeaving(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Leave without saving?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your changes in {active.label} haven’t been saved. If you leave now, they’re lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="justify-end">
+            <AlertDialogCancel asChild>
+              <Button>Keep editing</Button>
+            </AlertDialogCancel>
+            <AlertDialogAction asChild>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  guard.current = null
+                  setPage(leaving)
+                }}
+              >
+                Discard and leave
+              </Button>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

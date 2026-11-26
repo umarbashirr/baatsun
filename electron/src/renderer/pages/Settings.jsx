@@ -8,6 +8,16 @@ import {
   DialogTitle,
   DialogDescription,
 } from '../components/dialog.jsx'
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from '../components/alert-dialog.jsx'
 
 // Changing any of these means the daemon has to come back up: they are read
 // once at startup, and stt_backend in particular decides whether the local
@@ -211,6 +221,107 @@ function OperationDialog({ op, onClose, onRetry, onRetryRestart, returnFocus }) 
   )
 }
 
+const labelOf = (map, v) => {
+  const l = map[v]
+  return (typeof l === 'object' ? l.label : l) || String(v)
+}
+const onOff = (v) => (v ? 'On' : 'Off')
+
+// Every setting the page edits, by the name its row uses, with how to say
+// its value. The order is the page's order.
+const DESCRIBE = [
+  ['display_name', 'Display name', (v) => v || 'Your system name'],
+  ['hotkey', 'Hotkey', (v) => labelOf(HOTKEY_LABELS, v)],
+  ['activation', 'Activation', (v) => labelOf(ACTIVATION_LABELS, v)],
+  ['stt_backend', 'Transcribe with', (v) => labelOf(BACKEND_LABELS, v)],
+  ['hinglish', 'Language', (v) => (v ? 'English + Hinglish' : 'English')],
+  ['beam_size', 'Accuracy', (v) => labelOf(BEAM_LABELS, v)],
+  ['insert_method', 'Insert text by', (v) => labelOf(INSERT_LABELS, v)],
+  ['model_override', 'Local model', (v, ctx) => v || `${ctx.recommended} (recommended)`],
+  ['compute_type', 'Compute type', String],
+  ['cleanup_enabled', 'Clean up transcripts', onOff],
+  ['cleanup_scope', 'Apply to', (v) => labelOf(SCOPE_LABELS, v)],
+  ['cleanup_strength', 'Correction level', (v) => labelOf(STRENGTH_LABELS, v)],
+  ['cleanup_model', 'Cleanup model', String],
+  ['line_breaks', 'Break long text into paragraphs', onOff],
+]
+
+function describeChanges(initial, cfg, keys, ctx) {
+  const rows = DESCRIBE.filter(([k]) => initial[k] !== cfg[k]).map(([k, label, say]) => ({
+    label,
+    from: say(initial[k], ctx),
+    to: say(cfg[k], ctx),
+  }))
+  for (const [value, label] of [
+    [keys.openai, 'OpenAI API key'],
+    [keys.elevenlabs, 'ElevenLabs API key'],
+  ]) {
+    if (value === '') rows.push({ label, to: 'Will be removed' })
+    else if (value) rows.push({ label, to: 'New key entered' })
+  }
+  return rows
+}
+
+/**
+ * Unsaved changes, asked about in the middle of the window.
+ *
+ * Opens after a change (a pick in a menu or a switch at once; a text field
+ * when you leave it, not on every keystroke). It lists exactly what changed
+ * and warns when saving restarts the daemon. Keep editing closes it so you
+ * can change several things; the next change brings it back with all of them.
+ */
+function UnsavedDialog({ open, onOpenChange, changes, needsRestart, onSave, onDiscard }) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {needsRestart ? 'Save and restart the daemon?' : 'Save your changes?'}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {needsRestart
+              ? 'Some of these only take effect after the daemon restarts. Dictation pauses for a moment while it does.'
+              : 'They take effect from your next dictation.'}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+
+        <ul className="mt-5 max-h-[220px] divide-y divide-line overflow-y-auto rounded-[16px] bg-cream px-4">
+          {changes.map((c) => (
+            <li key={c.label} className="flex items-baseline justify-between gap-4 py-2.5 text-[14px]">
+              <span className="shrink-0 text-muted">{c.label}</span>
+              <span className="min-w-0 text-right">
+                {c.from !== undefined && (
+                  <>
+                    <span className="text-faint line-through decoration-faint/60">{c.from}</span>
+                    <span className="mx-1.5 text-faint" aria-label="changed to">→</span>
+                  </>
+                )}
+                <span className="font-medium text-ink">{c.to}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        <AlertDialogFooter className="justify-between">
+          <Button variant="ghost" className="-ml-3 text-live hover:bg-live/8 hover:text-live" onClick={onDiscard}>
+            Discard
+          </Button>
+          <div className="flex gap-2">
+            <AlertDialogCancel asChild>
+              <Button>Keep editing</Button>
+            </AlertDialogCancel>
+            <AlertDialogAction asChild>
+              <Button variant="primary" onClick={onSave}>
+                {needsRestart ? 'Save and restart' : 'Save changes'}
+              </Button>
+            </AlertDialogAction>
+          </div>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
 const opts = (values, labels) =>
   values.map((v) => {
     const l = labels?.[v]
@@ -224,7 +335,7 @@ const opts = (values, labels) =>
  * checked before committing to it — and neither probe costs anything, because
  * both hit a listing endpoint rather than doing real work.
  */
-function KeyField({ label, hint, provider, status, value, onChange, placeholder }) {
+function KeyField({ label, hint, provider, status, value, onChange, onCommit, placeholder }) {
   const [result, setResult] = useState(null)
   const [testing, setTesting] = useState(false)
   // value is null while the saved key is untouched, '' once it is marked for
@@ -261,7 +372,12 @@ function KeyField({ label, hint, provider, status, value, onChange, placeholder 
         )
       }
     >
-      <div className="flex gap-2">
+      {/* Done with the field = focus leaves the whole row, so moving from the
+          key box to its own Test button doesn't count. */}
+      <div
+        className="flex gap-2"
+        onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && onCommit?.(e)}
+      >
         <TextInput
           type="password"
           value={typed}
@@ -278,7 +394,14 @@ function KeyField({ label, hint, provider, status, value, onChange, placeholder 
           {testing ? '…' : 'Test'}
         </Button>
         {status?.set && !status.fromEnv && !typed && (
-          <Button size="md" variant="ghost" onClick={() => onChange(removing ? null : '')}>
+          <Button
+            size="md"
+            variant="ghost"
+            onClick={() => {
+              onChange(removing ? null : '')
+              onCommit?.()
+            }}
+          >
             {removing ? 'Keep' : 'Remove'}
           </Button>
         )}
@@ -287,7 +410,7 @@ function KeyField({ label, hint, provider, status, value, onChange, placeholder 
   )
 }
 
-export default function Settings() {
+export default function Settings({ setGuard }) {
   const [initial, setInitial] = useState(null)
   const [cfg, setCfg] = useState(null)
   const [choices, setChoices] = useState({})
@@ -302,6 +425,21 @@ export default function Settings() {
   // The save/restart dialog: { kind, restart, steps, outcome, error } or null.
   const [op, setOp] = useState(null)
   const pageRef = useRef(null)
+  // The unsaved-changes dialog. askTick counts finished edits; each one opens
+  // the dialog if anything is actually unsaved (picking the current value, or
+  // changing something back, doesn't).
+  const [asking, setAsking] = useState(false)
+  const [askTick, setAskTick] = useState(0)
+  const ask = () => setAskTick((t) => t + 1)
+  // Leaving a text field counts as finishing it, with two exceptions: focus
+  // going outside the page (the sidebar's leave-without-saving check covers
+  // that, and two dialogs at once would be one too many), and the window
+  // itself losing focus (alt-tabbing to copy a key isn't "done").
+  const askOnLeave = (e) => {
+    const to = e?.relatedTarget
+    if (to && !pageRef.current?.contains(to)) return
+    setTimeout(() => document.hasFocus() && ask(), 0)
+  }
   const openerRef = useRef(null)
   const startOp = (next) => {
     if (!op) openerRef.current = document.activeElement
@@ -349,6 +487,23 @@ export default function Settings() {
     [initial, cfg, sttKey],
   )
 
+  // Tell the app shell whether leaving this page would lose anything.
+  const dirtyRef = useRef(false)
+  dirtyRef.current = !!dirty
+  useEffect(() => {
+    setGuard?.(() => dirtyRef.current)
+    return () => setGuard?.(null)
+  }, [])
+
+  // Open once a menu that made the change has finished closing (its 120ms
+  // exit). Otherwise the menu hands focus back to its trigger after the
+  // dialog has taken it, and keyboard focus ends up behind the dialog.
+  useEffect(() => {
+    if (!askTick) return
+    const t = setTimeout(() => dirtyRef.current && setAsking(true), 160)
+    return () => clearTimeout(t)
+  }, [askTick])
+
   if (!cfg) {
     return (
       <p className="text-[14px] text-faint">
@@ -358,6 +513,17 @@ export default function Settings() {
   }
 
   const set = (key) => (value) => setCfg((prev) => ({ ...prev, [key]: value }))
+  // For menus and switches: the change is complete the moment it's made.
+  const pick = (key) => (value) => {
+    set(key)(value)
+    ask()
+  }
+  const discard = () => {
+    setCfg(initial)
+    setOpenaiKey(null)
+    setSttKey(null)
+    setAsking(false)
+  }
 
   const mark = (id, status) =>
     setOp((o) => o && { ...o, steps: o.steps.map((st) => (st.id === id ? { ...st, status } : st)) })
@@ -437,6 +603,7 @@ export default function Settings() {
             <TextInput
               value={cfg.display_name}
               onChange={(e) => set('display_name')(e.target.value)}
+              onBlur={askOnLeave}
               placeholder="Leave empty to use your system name"
               className="w-[230px]"
             />
@@ -449,7 +616,7 @@ export default function Settings() {
           <Field label="Hotkey" hint="Read below the compositor, so it works everywhere">
             <Select
               value={cfg.hotkey}
-              onChange={set('hotkey')}
+              onChange={pick('hotkey')}
               options={opts(choices.hotkey || [], HOTKEY_LABELS)}
             />
           </Field>
@@ -459,7 +626,7 @@ export default function Settings() {
           >
             <Select
               value={cfg.activation}
-              onChange={set('activation')}
+              onChange={pick('activation')}
               options={opts(choices.activation || [], ACTIVATION_LABELS)}
             />
           </Field>
@@ -481,7 +648,7 @@ export default function Settings() {
           >
             <Select
               value={cfg.stt_backend}
-              onChange={set('stt_backend')}
+              onChange={pick('stt_backend')}
               options={opts(choices.stt_backend || [], BACKEND_LABELS)}
             />
           </Field>
@@ -494,6 +661,7 @@ export default function Settings() {
               status={keys.elevenlabs}
               value={sttKey}
               onChange={setSttKey}
+              onCommit={askOnLeave}
               placeholder="sk_…"
             />
           )}
@@ -508,7 +676,7 @@ export default function Settings() {
           >
             <Select
               value={cfg.hinglish ? 'hinglish' : 'en'}
-              onChange={(v) => set('hinglish')(v === 'hinglish')}
+              onChange={(v) => pick('hinglish')(v === 'hinglish')}
               options={[
                 { value: 'en', label: 'English', hint: 'English-only model, the fastest' },
                 {
@@ -524,7 +692,7 @@ export default function Settings() {
             <Field label="Accuracy" hint="More accurate settings take a little longer per dictation">
               <Select
                 value={String(cfg.beam_size)}
-                onChange={(v) => set('beam_size')(Number(v))}
+                onChange={(v) => pick('beam_size')(Number(v))}
                 options={(choices.beam_size || [1, 3, 5]).map((v) => ({
                   value: String(v),
                   ...(BEAM_LABELS[v] || { label: String(v) }),
@@ -536,7 +704,7 @@ export default function Settings() {
           <Field label="Insert text by" hint="Paste also works for any script and any length">
             <Select
               value={cfg.insert_method}
-              onChange={set('insert_method')}
+              onChange={pick('insert_method')}
               options={opts(choices.insert_method || [], INSERT_LABELS)}
             />
           </Field>
@@ -551,7 +719,7 @@ export default function Settings() {
           >
             <Select
               value={cfg.model_override || ''}
-              onChange={set('model_override')}
+              onChange={pick('model_override')}
               options={[
                 {
                   value: '',
@@ -565,7 +733,7 @@ export default function Settings() {
           <Field label="Compute type">
             <Select
               value={cfg.compute_type}
-              onChange={set('compute_type')}
+              onChange={pick('compute_type')}
               options={opts(choices.compute_type || [])}
             />
           </Field>
@@ -590,7 +758,7 @@ export default function Settings() {
           <Field label="Clean up transcripts" hint="Off until an API key is saved below">
             <Toggle
               checked={cfg.cleanup_enabled}
-              onChange={set('cleanup_enabled')}
+              onChange={pick('cleanup_enabled')}
               label="Clean up transcripts"
             />
           </Field>
@@ -600,7 +768,7 @@ export default function Settings() {
               <Field label="Apply to" hint="Prose only: terminals and editors stay verbatim">
                 <Select
                   value={cfg.cleanup_scope}
-                  onChange={set('cleanup_scope')}
+                  onChange={pick('cleanup_scope')}
                   options={opts(choices.cleanup_scope || [], SCOPE_LABELS)}
                 />
               </Field>
@@ -610,14 +778,14 @@ export default function Settings() {
               >
                 <Select
                   value={cfg.cleanup_strength}
-                  onChange={set('cleanup_strength')}
+                  onChange={pick('cleanup_strength')}
                   options={opts(choices.cleanup_strength || [], STRENGTH_LABELS)}
                 />
               </Field>
               <Field label="Model">
                 <Select
                   value={cfg.cleanup_model}
-                  onChange={set('cleanup_model')}
+                  onChange={pick('cleanup_model')}
                   options={opts(choices.cleanup_model || [])}
                 />
               </Field>
@@ -627,7 +795,7 @@ export default function Settings() {
               >
                 <Toggle
                   checked={cfg.line_breaks}
-                  onChange={set('line_breaks')}
+                  onChange={pick('line_breaks')}
                   label="Break long text into paragraphs"
                 />
               </Field>
@@ -638,6 +806,7 @@ export default function Settings() {
                 status={keys.openai}
                 value={openaiKey}
                 onChange={setOpenaiKey}
+                onCommit={askOnLeave}
                 placeholder="sk-…"
               />
             </>
@@ -653,38 +822,20 @@ export default function Settings() {
         </Card>
       </Section>
 
-      {/* Pinned rather than inline: Settings is longer than the window, and a
-          save button that scrolls out of reach is a save button people miss.
-          Sticky, not fixed: the page wrapper animates its transform on entry,
-          which makes it the containing block for fixed children, so a fixed
-          bar was offset by the sidebar's width a second time. */}
-      {dirty && (
-        <div className="animate-rise sticky bottom-4 z-10 mt-8">
-          <div className="flex items-center justify-between gap-4 rounded-full border border-line bg-card/95 py-2 pl-6 pr-2 shadow-[0_14px_36px_-14px_rgba(27,26,23,0.3)] backdrop-blur">
-            <p className="text-[14.5px] leading-snug text-muted">
-              {needsRestart
-                ? 'Saving will restart the daemon, so dictation pauses for a moment.'
-                : 'You have unsaved changes.'}
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setCfg(initial)
-                  setOpenaiKey(null)
-                  setSttKey(null)
-                }}
-                disabled={saving}
-              >
-                Discard
-              </Button>
-              <Button variant="primary" onClick={save} disabled={saving}>
-                Save changes
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <UnsavedDialog
+        open={asking && !!dirty}
+        onOpenChange={setAsking}
+        changes={
+          dirty
+            ? describeChanges(initial, cfg, { openai: openaiKey, elevenlabs: sttKey }, {
+                recommended: cfg.hinglish ? multilingualModel : defaultModel,
+              })
+            : []
+        }
+        needsRestart={needsRestart}
+        onSave={save}
+        onDiscard={discard}
+      />
 
       <OperationDialog
         op={op}
