@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useDaemon } from './lib/useDaemon.js'
+import logo from './assets/logo.svg'
 import Home from './pages/Home.jsx'
 import Dictate from './pages/Dictate.jsx'
 import History from './pages/History.jsx'
@@ -269,12 +270,9 @@ export default function App() {
   return (
     <div className="flex h-full">
       <nav className="drag flex w-[220px] shrink-0 flex-col bg-sand" aria-label="Pages">
-        {/* The mark is the product: the same dark pill that sits on your screen. */}
-        <div className="flex h-16 items-center gap-2.5 px-6 pt-1">
-          <span
-            aria-hidden="true"
-            className="h-[9px] w-[26px] rounded-full bg-[#1c1c1e] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]"
-          />
+        {/* The logo: ब hanging from the Baatsun pill (brand/README.md). */}
+        <div className="flex h-16 items-center gap-2.5 px-5 pt-1">
+          <img src={logo} alt="" width="30" height="30" className="rounded-[8px]" draggable="false" />
           <span className="font-serif text-[25px] leading-none text-ink">baatsun</span>
         </div>
 

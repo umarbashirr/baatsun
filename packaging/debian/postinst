@@ -89,6 +89,7 @@ case "$1" in
         udevadm control --reload-rules >/dev/null 2>&1 || true
         udevadm trigger --name-match=uinput >/dev/null 2>&1 || true
         update-desktop-database -q /usr/share/applications >/dev/null 2>&1 || true
+        gtk-update-icon-cache -q -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
 
         TARGET_USER="${SUDO_USER:-}"
         if [ -z "$TARGET_USER" ] && [ -n "${PKEXEC_UID:-}" ]; then

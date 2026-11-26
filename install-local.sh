@@ -38,6 +38,15 @@ cp "$CHECKOUT/systemd/baatsun-ydotoold.service" "$UNITS/baatsun-ydotoold.service
 
 command -v update-desktop-database >/dev/null 2>&1 \
     && update-desktop-database -q "$APPS" || true
+
+# The app icon, so the launcher shows Baatsun's mark rather than a generic one.
+ICONS="$HOME/.local/share/icons/hicolor"
+install -D -m 644 "$CHECKOUT/brand/baatsun.svg" "$ICONS/scalable/apps/baatsun.svg"
+for size in 16 24 32 48 64 128 256 512; do
+    install -D -m 644 "$CHECKOUT/brand/png/baatsun-$size.png" "$ICONS/${size}x${size}/apps/baatsun.png"
+done
+command -v gtk-update-icon-cache >/dev/null 2>&1 \
+    && gtk-update-icon-cache -q -t "$ICONS" >/dev/null 2>&1 || true
 systemctl --user daemon-reload
 
 echo "baatsun: launcher, autostart and service now point at $CHECKOUT"

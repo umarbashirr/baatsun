@@ -1,3 +1,5 @@
+<img src="brand/baatsun-tile.svg" alt="Baatsun logo: the Devanagari letter ba hanging from the Baatsun pill" width="88" />
+
 # Baatsun
 
 *बात + सुन — "talk" + "listen".*

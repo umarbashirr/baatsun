@@ -11,6 +11,9 @@ case "$1" in
             rm -f /etc/apparmor.d/baatsun-electron
         fi
         rm -rf /opt/baatsun
+        # dpkg has removed the icon files; drop them from the cache too, or
+        # launchers keep showing a stale icon.
+        gtk-update-icon-cache -q -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
         # dpkg cannot stop per-user services. Say what is left behind.
         echo "baatsun: removed. Each user who enabled it should also run:"
         echo "  systemctl --user disable --now baatsun baatsun-ydotoold"
