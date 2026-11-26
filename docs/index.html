@@ -3,263 +3,311 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Baatsun — offline push-to-talk dictation for Linux</title>
-  <meta name="description" content="Hold Ctrl+Super anywhere, speak, let go. Baatsun transcribes on your own CPU with faster-whisper and pastes the text into whatever window has focus. Free and open source (MIT)." />
-  <meta name="theme-color" content="#0b0b0e" />
-  <link rel="canonical" href="https://umarbashirr.github.io/baatsun/" />
+  <title>Baatsun: talk to any window on Linux. Offline, open-source dictation.</title>
+  <meta name="description" content="Hold Ctrl+Super in any app, say what you mean, and let go. Baatsun turns your voice into text on your own computer and pastes it where your cursor is. Free and open source." />
+  <meta name="theme-color" content="#faf8f3" />
+  <link rel="canonical" href="https://getbaatsun.netlify.app/" />
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="Baatsun — offline push-to-talk dictation for Linux" />
-  <meta property="og:description" content="Hold a hotkey, speak, let go. Transcribed on your machine, typed into any window. Free and open source." />
-  <meta property="og:url" content="https://umarbashirr.github.io/baatsun/" />
-  <meta property="og:image" content="https://umarbashirr.github.io/baatsun/assets/home.png" />
+  <meta property="og:title" content="Baatsun: talk to any window on Linux" />
+  <meta property="og:description" content="Hold a key, speak, let go. Transcribed on your own computer and pasted where your cursor is. Free and open source." />
+  <meta property="og:url" content="https://getbaatsun.netlify.app/" />
+  <meta property="og:image" content="https://getbaatsun.netlify.app/assets/home.png" />
   <meta name="twitter:card" content="summary_large_image" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23ef9f4e'/%3E%3Ctext x='32' y='45' font-size='38' text-anchor='middle' fill='%2308080a' font-family='sans-serif'%3E%E0%A4%AC%3C/text%3E%3C/svg%3E" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%231f3d2e'/%3E%3Crect x='14' y='29' width='36' height='8' rx='4' fill='%23faf8f3'/%3E%3C/svg%3E" />
+  <link rel="preload" href="fonts/tiro.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="fonts/mukta-regular.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="style.css" />
+  <script>document.documentElement.classList.add('js')</script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
 
   <header class="nav">
-    <div class="wrap nav-inner">
-      <a class="brand" href="#top" aria-label="Baatsun home">
-        <span class="logo" aria-hidden="true">ब</span>
-        <span>Baatsun</span>
-      </a>
-      <nav aria-label="Primary">
+    <div class="wrap nav-in">
+      <a class="mark" href="#top" aria-label="Baatsun, back to top">baatsun</a>
+      <nav class="nav-links" aria-label="Sections">
         <a href="#how">How it works</a>
-        <a href="#features">Features</a>
         <a href="#privacy">Privacy</a>
         <a href="#install">Install</a>
-        <a class="gh" href="https://github.com/umarbashirr/baatsun">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-          <span>GitHub</span>
-        </a>
       </nav>
+      <div class="nav-cta">
+        <a class="btn btn-ghost btn-sm" href="https://github.com/umarbashirr/baatsun">GitHub</a>
+        <a class="btn btn-green btn-sm" href="#install">Install</a>
+      </div>
     </div>
   </header>
 
   <main id="main">
     <!-- Hero -->
     <section class="hero" id="top">
-      <div class="wrap hero-grid">
-        <div class="hero-copy">
-          <p class="eyebrow"><span class="dev">बात + सुन</span> · “talk” + “listen”</p>
-          <h1>Hold a key. Speak.<br /><span class="accent">Let go.</span></h1>
-          <p class="lede">
-            Baatsun is push-to-talk voice dictation for Linux. Hold
-            <span class="nowrap"><kbd>Ctrl</kbd>&thinsp;+&thinsp;<kbd>Super</kbd></span> in any app, say what you mean, and
-            release. Your speech is transcribed <strong>on your own CPU</strong> and pasted
-            into whatever window has focus.
-          </p>
-          <div class="cta">
-            <a class="btn btn-primary" href="#install">Install for Ubuntu / Debian</a>
-            <a class="btn btn-ghost" href="https://github.com/umarbashirr/baatsun">View the source</a>
-          </div>
-          <ul class="facts" aria-label="At a glance">
-            <li>Offline by default</li>
-            <li>Any app, any desktop</li>
-            <li>MIT licensed</li>
-          </ul>
+      <div class="wrap hero-in">
+        <h1 class="hero-title" id="hero-title">Talk to any window on Linux.</h1>
+        <p class="hero-lede">
+          Hold <kbd>Ctrl</kbd>&#8239;+&#8239;<kbd>Super</kbd>, say what you mean, and let go.
+          Baatsun turns your voice into text on your own computer and pastes it wherever your cursor is.
+        </p>
+        <div class="hero-cta">
+          <a class="btn btn-green" href="#install">Install for Ubuntu</a>
+          <a class="btn btn-ghost" href="https://github.com/umarbashirr/baatsun">View on GitHub</a>
         </div>
+        <p class="hero-note">Free and open source. Works offline.</p>
+      </div>
+    </section>
 
-        <!-- Live demo: purely decorative, the copy beside it says the same thing. -->
-        <div class="demo" aria-hidden="true">
-          <div class="demo-window">
-            <div class="demo-bar">
-              <span></span><span></span><span></span>
-              <em>#engineering — Slack</em>
+    <!-- The stage: one dictation, pinned to the scroll, over a real desk -->
+    <section class="stage" id="how" aria-labelledby="how-title">
+      <div class="stage-track" id="story">
+        <div class="stage-sticky">
+          <div class="card-photo" id="card">
+            <img class="card-bg" src="assets/desk.webp" alt="" width="2000" height="1333" fetchpriority="high" />
+
+            <div class="caption">
+              <h2 class="sr-only" id="how-title">How a dictation works</h2>
+              <div class="steps-bar" aria-hidden="true"><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i></div>
+              <ol class="beats">
+                <li class="beat" data-beat="0">
+                  <p class="beat-n">Step 1 of 4</p>
+                  <h3>Hold <kbd>Ctrl</kbd>&#8239;+&#8239;<kbd>Super</kbd></h3>
+                  <p>In any app, on X11 or Wayland. Baatsun reads the keyboard below the compositor, so there’s no shortcut to set up.</p>
+                </li>
+                <li class="beat" data-beat="1">
+                  <p class="beat-n">Step 2 of 4</p>
+                  <h3>Talk</h3>
+                  <p>Say it the way you’d say it. The pill opens and listens, and never takes focus from the window you’re in.</p>
+                </li>
+                <li class="beat" data-beat="2">
+                  <p class="beat-n">Step 3 of 4</p>
+                  <h3>Let go</h3>
+                  <p>Whisper transcribes on your CPU in about 1.6 seconds. With cleanup on, fillers and stutters go and your wording stays.</p>
+                </li>
+                <li class="beat" data-beat="3">
+                  <p class="beat-n">Step 4 of 4</p>
+                  <h3>It lands where your cursor is</h3>
+                  <p>Pasted into the focused window, and your clipboard is put back. A chat message stays one line; an email greeting gets a line of its own.</p>
+                </li>
+              </ol>
             </div>
-            <div class="demo-body">
-              <div class="msg"><b>Priya</b><p>Is the reconnect fix ready for review?</p></div>
+
+            <div class="scene" aria-hidden="true">
+              <div class="win" id="win">
+                <div class="win-bar">
+                  <span class="win-dots"><i></i><i></i><i></i></span>
+                  <span class="win-title" id="win-title">#backend</span>
+                </div>
+                <div class="win-body">
+                  <div class="app app-chat" data-app="0">
+                    <p class="m-them"><b>Priya</b>Did you find out why the reconnect tests keep flaking?</p>
+                    <div class="m-input"><span class="paste" id="paste-chat"></span><i class="caret"></i></div>
+                  </div>
+                  <div class="app app-mail" data-app="1">
+                    <p class="mail-row"><span>To</span>priya@team.dev</p>
+                    <p class="mail-row"><span>Subject</span>Reconnect flake</p>
+                    <div class="mail-body"><span class="paste" id="paste-mail"></span><i class="caret"></i></div>
+                  </div>
+                  <div class="app app-term" data-app="2">
+                    <p class="t-line"><span class="t-ps">~/api $</span> git log --oneline -1</p>
+                    <p class="t-line t-out">a41c9e2 retry reconnect after close</p>
+                    <p class="t-line"><span class="t-ps">~/api $</span> <span class="paste" id="paste-term"></span><i class="caret"></i></p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="band">
+                <p class="said" id="said"></p>
+                <p class="lands" id="lands"></p>
+              </div>
+
+              <div class="keys">
+                <span class="key" id="k-ctrl">Ctrl</span>
+                <span class="key key-wide" id="k-super">Super</span>
+              </div>
+
+              <div class="spill" id="spill">
+                <span class="spill-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                <span class="spill-spin"></span>
+              </div>
+
+              <svg class="ribbon" id="ribbon">
+                <path id="ribbon-path" fill="none" />
+                <text><textPath id="ribbon-text" href="#ribbon-path"></textPath></text>
+              </svg>
             </div>
-            <div class="demo-input"><span id="input-hint">Message #engineering</span><span class="typed" id="typed"></span><i class="caret"></i></div>
           </div>
-          <div class="keys" id="keys"><kbd>Ctrl</kbd><span>+</span><kbd>Super</kbd></div>
-          <div class="pill" id="pill">
-            <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-            <div class="spin"></div>
-          </div>
-          <p class="demo-caption" id="caption">Idle: the pill waits at the bottom of the screen</p>
         </div>
       </div>
     </section>
 
-    <!-- How -->
-    <section class="section" id="how">
+    <!-- Speaking vs typing -->
+    <section class="race" id="race" aria-labelledby="race-title">
       <div class="wrap">
-        <h2 class="h2">How it works</h2>
-        <p class="sub">There's nothing to click and no shortcut to register. The hotkey works the same on any desktop, on X11 or Wayland.</p>
-        <ol class="steps">
-          <li>
-            <span class="num">1</span>
-            <h3>Hold the hotkey</h3>
-            <p>Baatsun reads the keyboard below the compositor, so <kbd>Ctrl</kbd>+<kbd>Super</kbd> works in every window, including fullscreen ones. You can also use toggle mode, or tap-or-hold.</p>
-          </li>
-          <li>
-            <span class="num">2</span>
-            <h3>Speak naturally</h3>
-            <p>A small always-on-top pill opens to show live level bars. It never takes focus, so the window you're typing into stays the one you're in.</p>
-          </li>
-          <li>
-            <span class="num">3</span>
-            <h3>Let go</h3>
-            <p>faster-whisper transcribes locally in about 1.6&nbsp;s, and the text is pasted where your cursor is. Your clipboard is restored afterwards.</p>
-          </li>
-        </ol>
+        <div class="sec-head">
+          <h2 class="sec-title" id="race-title">Say it in a third of the time it takes to type it</h2>
+          <p class="sec-lede">The same 50 words, typed at 40 words a minute and spoken at 150 (the rates Baatsun’s own Home page uses), plus 1.6 seconds to transcribe. Played six times faster than real life.</p>
+        </div>
+        <div class="lanes">
+          <div class="lane lane-speak" id="lane-speak">
+            <div class="lane-head"><h3>Speaking with Baatsun</h3><span class="lane-time">0:00</span></div>
+            <i class="lane-track"><b class="lane-fill"></b></i>
+            <p class="lane-state">Ready</p>
+            <div class="lane-body">
+              <span class="lane-bars" aria-hidden="true"></span>
+              <p class="lane-text"><span class="done"></span><span class="todo"></span></p>
+            </div>
+          </div>
+          <div class="lane lane-type" id="lane-type">
+            <div class="lane-head"><h3>Typing</h3><span class="lane-time">0:00</span></div>
+            <i class="lane-track"><b class="lane-fill"></b></i>
+            <p class="lane-state">Ready</p>
+            <div class="lane-body">
+              <p class="lane-text"><span class="done"></span><i class="caret"></i><span class="todo"></span></p>
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-ghost race-again" id="race-again" type="button">Run it again</button>
       </div>
     </section>
 
-    <!-- Features -->
-    <section class="section" id="features">
+    <!-- Privacy -->
+    <section class="privacy-sec" id="privacy" aria-labelledby="privacy-title">
       <div class="wrap">
-        <h2 class="h2">Built for people who type all day</h2>
-        <div class="grid">
-          <article class="card">
-            <h3>Offline transcription</h3>
-            <p>whisper <code>small.en</code>, int8, on your CPU. It's the smallest model that gets every word right and punctuates properly. No account and no subscription.</p>
+        <div class="card-green privacy">
+          <div class="privacy-copy">
+            <h2 class="sec-title" id="privacy-title">Nothing leaves your computer unless you switch it on</h2>
+            <p>Transcription runs on your own CPU, and the recording is deleted once it’s done. There are two optional cloud features. Switch them on here to see exactly what each would send.</p>
+            <div class="switches">
+              <button class="switch" type="button" role="switch" aria-checked="false" data-flow="text">
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+                <span class="switch-text"><b>Clean up with OpenAI</b><span>Sends the transcript text, never audio, and only from windows where you write prose.</span></span>
+              </button>
+              <button class="switch" type="button" role="switch" aria-checked="false" data-flow="audio">
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+                <span class="switch-text"><b>Transcribe with ElevenLabs</b><span>More accurate and uses less memory, but sends your recorded audio.</span></span>
+              </button>
+            </div>
+            <p class="flow-status" id="flow-status" aria-live="polite">Both are off, so nothing is sent anywhere.</p>
+          </div>
+
+          <figure class="machine" aria-hidden="true">
+            <div class="box">
+              <p class="box-name">Your computer <span class="box-tag">Offline by default</span></p>
+              <div class="pipe">
+                <span class="node" data-node="audio">Your voice</span>
+                <i class="link"></i>
+                <span class="node" data-node="text">Whisper on your CPU</span>
+                <i class="link"></i>
+                <span class="node">Your window</span>
+              </div>
+            </div>
+            <div class="outs">
+              <div class="out" data-out="audio"><i class="wire"></i><span class="cloud">ElevenLabs</span><small>Not sent</small></div>
+              <div class="out" data-out="text"><i class="wire"></i><span class="cloud">OpenAI</span><small>Not sent</small></div>
+            </div>
+          </figure>
+        </div>
+
+        <div class="keylog">
+          <h3>One more thing you should know</h3>
+          <p>To catch the hotkey on any desktop, Baatsun reads the keyboard directly, so it can see every key you press. It only acts on Ctrl and Super, and it logs nothing else. That kind of access is why the code is public: <a href="https://github.com/umarbashirr/baatsun/blob/main/src/baatsun.py">read <code>src/baatsun.py</code></a> before you trust it.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Details -->
+    <section class="details" aria-labelledby="details-title">
+      <div class="wrap">
+        <div class="sec-head">
+          <h2 class="sec-title" id="details-title">The details people ask about</h2>
+        </div>
+        <div class="bento">
+          <article class="tile tile-wide">
+            <h3>It works in any app</h3>
+            <p>Text arrives through the clipboard, or through <code>ydotool</code> at the kernel level, so it lands anywhere you can type. Terminals get <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>.</p>
+            <ul class="chips" aria-label="Examples">
+              <li>Firefox</li><li>Slack</li><li>Gmail</li><li>VS Code</li><li>Terminal</li><li>Obsidian</li><li>WhatsApp</li><li>LibreOffice</li>
+            </ul>
           </article>
-          <article class="card">
-            <h3>Works in every app</h3>
-            <p>Text goes in through the clipboard or <code>ydotool</code> at the kernel level, so it lands in terminals, browsers, editors and chat apps alike. Terminals get <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>.</p>
+          <article class="tile tile-wide">
+            <h3>It learns your words</h3>
+            <p>Add names, products and jargon to your vocabulary, and whisper is biased toward them. The cloud backend, if you use it, gets the same list.</p>
+            <ul class="chips chips-vocab" aria-label="Example vocabulary">
+              <li>PipeWire</li><li>Kubernetes</li><li>Priya</li><li>Postgres</li><li>systemd</li><li>Wayland</li>
+            </ul>
           </article>
-          <article class="card">
-            <h3>A proofreader, not a rewriter</h3>
-            <p>An optional OpenAI cleanup pass fixes punctuation, fillers and spoken self-corrections (“3, no, 4” → “4”). It keeps your wording, and it is never applied to terminals or code editors.</p>
+          <article class="tile">
+            <h3>English, or with Hinglish</h3>
+            <p>English uses the fast English-only model. Switch on Hinglish and it loads the multilingual model, so Hindi and Urdu words are heard instead of guessed.</p>
           </article>
-          <article class="card">
-            <h3>Knows where it lands</h3>
-            <p>In Gmail, a greeting goes on its own line. In WhatsApp, it stays one line because Enter sends. Long posts become short paragraphs. Cleanup never adds words you didn't say.</p>
+          <article class="tile">
+            <h3>Long dictations finish fast</h3>
+            <p>With ElevenLabs on, audio goes up in slices cut at your pauses while you talk, so a ten-minute brainstorm is mostly done when you let go.</p>
           </article>
-          <article class="card">
-            <h3>Your vocabulary</h3>
-            <p>Add the names, products and jargon you use. Whisper is biased toward them, and so is the cloud backend if you turn it on.</p>
-          </article>
-          <article class="card">
-            <h3>English &amp; Hinglish</h3>
-            <p>English uses the fast English-only model. English&nbsp;+&nbsp;Hinglish switches to the multilingual model, so Hindi and Urdu words are recognised instead of guessed.</p>
-          </article>
-          <article class="card">
-            <h3>Long dictations</h3>
-            <p>With the optional ElevenLabs backend, audio is sent in slices cut at pauses <em>while you talk</em>, so a ten-minute brainstorm finishes almost as soon as you let go.</p>
-          </article>
-          <article class="card">
-            <h3>See what it costs</h3>
-            <p>Home shows dictations, words, time saved and your streak. Costs shows exactly what OpenAI and ElevenLabs billed, if you use them. The local engine is free.</p>
-          </article>
-          <article class="card">
-            <h3>A real desktop app</h3>
-            <p>A searchable history grouped by day, with the text from before cleanup kept alongside. There's also a tray icon, a GNOME Shell pill and a full settings page.</p>
+          <article class="tile tile-sand">
+            <h3>It costs nothing, or close to it</h3>
+            <p class="tile-figure">3¢<span> a month</span></p>
+            <p>Local transcription is free. Cleanup with OpenAI comes to about that at two minutes of speech a day, and the Costs page shows exactly what was billed.</p>
           </article>
         </div>
       </div>
     </section>
 
     <!-- Screens -->
-    <section class="section" id="screens">
-      <div class="wrap">
-        <h2 class="h2">The app window</h2>
-        <p class="sub">An Electron + React window that talks to the background daemon over a local socket.</p>
-        <div class="tabs" role="tablist" aria-label="App screens">
-          <button role="tab" aria-selected="true" aria-controls="shot" data-src="assets/home.png" data-alt="Home page: greeting, dictation and word counts, time saved, streak, and a 14-day activity chart">Home</button>
-          <button role="tab" aria-selected="false" aria-controls="shot" data-src="assets/dictate.png" data-alt="Dictate page while listening, showing which window the transcript will land in">Dictate</button>
-          <button role="tab" aria-selected="false" aria-controls="shot" data-src="assets/history.png" data-alt="History page: transcripts grouped by day, searchable, with cleaned entries marked">History</button>
-          <button role="tab" aria-selected="false" aria-controls="shot" data-src="assets/settings.png" data-alt="Settings page: hotkey, activation mode, transcription engine, language and accuracy">Settings</button>
-        </div>
-        <figure class="shot-frame">
-          <img id="shot" src="assets/home.png" width="1200" height="780" loading="lazy"
-               alt="Home page: greeting, dictation and word counts, time saved, streak, and a 14-day activity chart" />
-        </figure>
+    <section class="screens" id="screens" aria-labelledby="screens-title">
+      <div class="wrap sec-head">
+        <h2 class="sec-title" id="screens-title">And a window for everything else</h2>
+        <p class="sec-lede">History you can search, the words you’ve taught it, what it has cost, and every setting.</p>
       </div>
-    </section>
-
-    <!-- Privacy -->
-    <section class="section" id="privacy">
-      <div class="wrap privacy">
-        <div>
-          <h2 class="h2">Your voice stays on your machine</h2>
-          <p class="sub">That's the default, and you don't have to set anything up. Nothing leaves this computer unless you turn on one of the two opt-ins, and each one says what it sends.</p>
+      <div class="reel" id="reel">
+        <div class="reel-track" id="reel-track">
+          <figure><img src="assets/home.png" width="1200" height="780" loading="lazy" alt="Home: dictations, words, time saved and a 14-day activity chart" /><figcaption>Home</figcaption></figure>
+          <figure><img src="assets/dictate.png" width="1200" height="780" loading="lazy" alt="Dictate while listening, showing the Slack window the text will land in" /><figcaption>Dictate</figcaption></figure>
+          <figure><img src="assets/history.png" width="1200" height="780" loading="lazy" alt="History grouped by day, with cleaned entries marked and the original kept" /><figcaption>History</figcaption></figure>
+          <figure><img src="assets/settings.png" width="1200" height="780" loading="lazy" alt="Settings: hotkey, activation, transcription engine, language and accuracy" /><figcaption>Settings</figcaption></figure>
         </div>
-        <ul class="ledger">
-          <li class="ok">
-            <span class="tag">Default</span>
-            <div><h3>Local transcription</h3><p>Audio is captured with PipeWire, transcribed by faster-whisper on your CPU, then discarded. History is stored <code>0600</code> in <code>~/.local/share/baatsun</code>, and you can clear it.</p></div>
-          </li>
-          <li>
-            <span class="tag">Opt-in</span>
-            <div><h3>Cleanup with OpenAI</h3><p>Sends the <em>transcript text</em>, never the audio, and only for windows classified as prose. If the call fails, your raw transcript is typed instead.</p></div>
-          </li>
-          <li>
-            <span class="tag">Opt-in</span>
-            <div><h3>Transcribe with ElevenLabs</h3><p>Sends the <em>audio itself</em>. It's more accurate and frees about 690&nbsp;MB of RAM, but it is the only setting that takes your voice off this machine.</p></div>
-          </li>
-          <li class="warn">
-            <span class="tag">Read this</span>
-            <div><h3>It can see every keystroke</h3><p>Reading raw evdev means the daemon sees all keyboard input, not just the hotkey. It only acts on Ctrl/Super state and logs nothing else, but this is keylogger-capable code. That's why the source is open: <a href="https://github.com/umarbashirr/baatsun/blob/main/src/baatsun.py">read <code>src/baatsun.py</code></a> before you trust it.</p></div>
-          </li>
-        </ul>
       </div>
     </section>
 
     <!-- Install -->
-    <section class="section" id="install">
+    <section class="install-sec" id="install" aria-labelledby="install-title">
       <div class="wrap">
-        <h2 class="h2">Install</h2>
-        <p class="sub">On Ubuntu or Debian (amd64), run this as yourself, not with <code>sudo</code>. It asks for your password only when it installs the package.</p>
-        <div class="code">
-          <pre><code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/umarbashirr/baatsun/main/install.sh | bash</code></pre>
-          <button class="copy" type="button" data-copy="install-cmd">Copy</button>
-        </div>
-        <ol class="after">
-          <li>The installer downloads the latest <code>.deb</code> from <a href="https://github.com/umarbashirr/baatsun/releases/latest">Releases</a>, checks its SHA-256, installs it with <code>apt</code>, and starts the service.</li>
-          <li>If it asks you to, log out and back in once, so your new <code>input</code> group membership takes effect.</li>
-          <li>Open <strong>Baatsun</strong> from your launcher and hold <kbd>Ctrl</kbd>+<kbd>Super</kbd> to dictate. The first start downloads the speech model (~250&nbsp;MB).</li>
-        </ol>
-        <div class="req">
-          <div>
-            <h3>Requirements</h3>
-            <ul>
-              <li>Linux with PipeWire (Ubuntu 22.10+ and most modern distros)</li>
-              <li>Python 3.12+</li>
-              <li>x86-64 for the <code>.deb</code>. Other machines can build from source</li>
-              <li>The pill needs GNOME, or a Wayland compositor with <code>wlr-layer-shell</code></li>
-            </ul>
+        <div class="card-green install">
+          <h2 class="install-title" id="install-title">Install it with one line</h2>
+          <div class="cmd">
+            <code id="cmd-install">curl -fsSL https://raw.githubusercontent.com/umarbashirr/baatsun/main/install.sh | bash</code>
+            <button class="copy" type="button" data-copy="cmd-install">Copy</button>
           </div>
-          <div>
-            <h3>Other ways</h3>
-            <ul>
-              <li><a href="https://github.com/umarbashirr/baatsun#build-from-source">Build from source</a> on any distro</li>
-              <li>Pin a release: <code>… | bash -s -- --version v0.11.0</code></li>
-              <li>Uninstall: <code>… | bash -s -- --uninstall</code> (keeps your settings)</li>
-            </ul>
-          </div>
+          <ol class="steps">
+            <li><p>Run it as yourself, not with <code>sudo</code>. It downloads the latest release, checks its SHA-256, installs it with <code>apt</code>, and starts the service.</p></li>
+            <li><p>If it asks, log out and back in once so your new <code>input</code> group membership takes effect.</p></li>
+            <li><p>Open Baatsun from your launcher and hold <kbd>Ctrl</kbd>+<kbd>Super</kbd>. The first start downloads the speech model, about 250&nbsp;MB.</p></li>
+          </ol>
+          <p class="needs">You need Linux with PipeWire, Python 3.12 or newer, and an x86-64 machine for the package. The pill needs GNOME or a Wayland compositor with layer-shell support. Anything else can <a href="https://github.com/umarbashirr/baatsun#build-from-source">build from source</a>.</p>
         </div>
-      </div>
-    </section>
 
-    <!-- Contribute -->
-    <section class="section" id="contribute">
-      <div class="wrap contribute">
-        <div>
-          <h2 class="h2">Free and open source</h2>
-          <p class="sub">Baatsun is MIT licensed and built in the open. Bug reports, distro packaging, new transcription backends and docs fixes are all welcome.</p>
-        </div>
-        <div class="links">
-          <a class="link-card" href="https://github.com/umarbashirr/baatsun/blob/main/CONTRIBUTING.md"><b>Contribute</b><span>Set up a dev environment and send a PR</span></a>
-          <a class="link-card" href="https://github.com/umarbashirr/baatsun/issues/new/choose"><b>Report a bug</b><span>Include your distro, desktop and the daemon log</span></a>
-          <a class="link-card" href="https://github.com/umarbashirr/baatsun/security/policy"><b>Security</b><span>Report vulnerabilities privately</span></a>
-          <a class="link-card" href="https://github.com/umarbashirr/baatsun/releases"><b>Releases</b><span>Changelog and <code>.deb</code> downloads</span></a>
+        <div class="oss">
+          <h2 class="sec-title">Built in the open</h2>
+          <ul class="oss-links">
+            <li><a href="https://github.com/umarbashirr/baatsun">Read the source</a></li>
+            <li><a href="https://github.com/umarbashirr/baatsun/blob/main/CONTRIBUTING.md">Contribute</a></li>
+            <li><a href="https://github.com/umarbashirr/baatsun/issues/new/choose">Report a bug</a></li>
+            <li><a href="https://github.com/umarbashirr/baatsun/security/policy">Report a vulnerability</a></li>
+            <li><a href="https://github.com/umarbashirr/baatsun/releases">Releases</a></li>
+          </ul>
         </div>
       </div>
     </section>
   </main>
 
   <footer class="foot">
-    <div class="wrap foot-inner">
-      <span><span class="logo sm" aria-hidden="true">ब</span> Baatsun · MIT License · by Umar Bashir Rather</span>
-      <span>This page has no trackers, no cookies and no web fonts.</span>
+    <p class="foot-word" lang="hi" aria-label="Baat sun, Hindi for talk and listen">बात सुन</p>
+    <div class="wrap foot-in">
+      <p>Baat means talk, sun means listen. Baatsun is free software under the MIT license, made by Umar Bashir Rather and contributors.</p>
+      <p>Desk photo by <a href="https://unsplash.com/photos/gray-dell-laptop-on-table-iZ4QZFbQ2S8">Greg Rosenke</a> on Unsplash. This site has no trackers and no cookies, and loads nothing from anywhere else.</p>
     </div>
   </footer>
 
+  <a class="pill" id="pill" href="#install"><span class="pill-label">Install Baatsun</span></a>
+
+  <script src="vendor/lenis.min.js" defer></script>
   <script src="main.js" defer></script>
 </body>
 </html>
