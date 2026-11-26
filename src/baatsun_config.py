@@ -39,12 +39,14 @@ DEFAULT_MULTILINGUAL_MODEL = "small"
 # (a browser on LinkedIn/X, a chat app) rather than a developer context. Only
 # the transcript text is sent — never the audio, which stays on this machine.
 DEFAULT_CLEANUP_MODEL = "gpt-6-luna"
-# GPT-6 Luna is a reasoning model: it can think before answering. "medium" is
-# OpenAI's default for it and what Baatsun ships with; "none" is fastest and
-# "high" slowest. Older, non-reasoning models (gpt-4o-mini, gpt-4.1-*) ignore
-# this. xhigh and max exist too but are pointless for proofreading.
+# GPT-6 Luna is a reasoning model: it can think before answering. Baatsun
+# ships "low": proofreading needs a little thought, not much, and every second
+# of thinking is a second before the text appears. ("medium" is OpenAI's own
+# default for Luna.) "none" is fastest and "high" slowest. Older,
+# non-reasoning models (gpt-4o-mini, gpt-4.1-*) ignore this. xhigh and max
+# exist too but are pointless for proofreading.
 CLEANUP_REASONING_CHOICES = ["none", "low", "medium", "high"]
-DEFAULT_CLEANUP_REASONING = "medium"
+DEFAULT_CLEANUP_REASONING = "low"
 CLEANUP_SCOPE_CHOICES = ["prose", "all"]
 
 # Where transcription happens. "local" is faster-whisper on this CPU and is the

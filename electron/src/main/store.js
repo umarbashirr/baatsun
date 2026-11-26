@@ -30,7 +30,7 @@ const DEFAULTS = {
   activation: 'hold',
   cleanup_enabled: false,
   cleanup_model: 'gpt-6-luna',
-  cleanup_reasoning: 'medium',
+  cleanup_reasoning: 'low',
   cleanup_scope: 'prose',
   vocabulary: '',
   cleanup_strength: 'grammar',

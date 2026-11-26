@@ -74,7 +74,7 @@ curl -fsSL https://raw.githubusercontent.com/umarbashirr/baatsun/main/install.sh
 - **Optional cleanup pass** — a proofreader, not a rewriter: fixes punctuation,
   filler words, stutters and your own spoken corrections ("3, no, 4" → "4"),
   and keeps your wording, via OpenAI's
-  GPT-6 Luna (`gpt-6-luna`, medium reasoning), but only when the focused window is
+  GPT-6 Luna (`gpt-6-luna`, low reasoning), but only when the focused window is
   prose (LinkedIn, X, Slack).
   Terminals and editors are always typed verbatim. Your audio never leaves the
   machine; only the transcript text is sent, and only if you enable it.
@@ -662,9 +662,9 @@ that's the point of transcribing locally and only polishing remotely.
 
 GPT-6 Luna is a reasoning model: it thinks briefly before correcting.
 **Reasoning** in Settings sets how much, from *None* (fastest) to *High*;
-the default is *Medium*. Thinking takes a few seconds, so cleanup now adds a
-few seconds per dictation rather than one; set Reasoning to *None* or *Low* if
-you'd rather have speed. The older non-reasoning models (`gpt-4o-mini`,
+the default is *Low*: proofreading needs a little thought, not much, and
+thinking is time before the text appears. Set it to *None* for the fastest
+cleanup or *Medium* for more care. The older non-reasoning models (`gpt-4o-mini`,
 `gpt-4.1-*`) are still in the **Model** menu and skip that setting.
 
 Enable it in the gear icon → **Cleanup with OpenAI**:
@@ -732,10 +732,10 @@ failed API call.
 
 Cleanup is billed per token. GPT-6 Luna costs **$0.10 per million input
 tokens and $0.50 per million output tokens**, and its thinking is billed as
-output. How much it thinks varies, so as an example: a dictation that sends 400
-tokens and gets back 1,000 (mostly thinking) costs about **$0.0005**. Baatsun
-caps the thinking per request, so even a ten-minute dictation stays under a
-cent. The **Costs** page shows exactly what was billed. Transcription itself is
+output. Measured on 2026-11-26 at the default *Low* reasoning, a one-sentence
+dictation sent 489 tokens and got 28 back: **$0.00006**, in about 2.4 seconds.
+Longer dictations and higher Reasoning settings cost more, but Baatsun caps the
+thinking per request, so even a ten-minute dictation stays under a cent. The **Costs** page shows exactly what was billed. Transcription itself is
 free — it runs on your CPU.
 
 ## Privacy
@@ -804,9 +804,9 @@ before trusting it with anything sensitive.
   is *Paste* (typing key by key is slow on long text). Then set **Accuracy** to
   *Balanced* or *Fastest*, or `model_override` to `base.en` (see
   [Configuration](#configuration)); it's about 2x quicker than `small.en` but
-  does substitute words. With cleanup on, its OpenAI round trip adds a few
-  seconds per dictation at the default *Medium* reasoning; set **Reasoning** to
-  *Low* or *None* in Settings to cut that.
+  does substitute words. With cleanup on, its OpenAI round trip adds about two
+  to three seconds per dictation at the default *Low* reasoning; set
+  **Reasoning** to *None* in Settings for the quickest.
 - **Text never appears, log says `could not insert the transcript`** — with
   ydotool 1.x, `ydotoold` must be running:
   `systemctl --user enable --now baatsun-ydotoold`. For pasting, install

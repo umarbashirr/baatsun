@@ -29,7 +29,7 @@ MIN_TIMEOUT = 6
 MAX_TIMEOUT = 90
 TIMEOUT = MIN_TIMEOUT
 # A reasoning model thinks before it answers, so even a sentence takes longer
-# than gpt-4o-mini's ~1s. Give it a floor that "medium" effort clears.
+# than gpt-4o-mini's ~1s. Give it a floor that even "medium" effort clears.
 MIN_REASONING_TIMEOUT = 20
 
 # Reasoning models (GPT-6 Luna, the GPT-5 family, the o-series) take
@@ -37,7 +37,7 @@ MIN_REASONING_TIMEOUT = 20
 # don't document a temperature parameter, so they get a different payload.
 REASONING_PREFIXES = ("gpt-6", "gpt-5", "o1", "o3", "o4")
 REASONING_EFFORTS = ("none", "low", "medium", "high")
-DEFAULT_REASONING = "medium"
+DEFAULT_REASONING = "low"
 # Room for the model to think on top of the answer itself. Reasoning tokens
 # count against max_completion_tokens; too tight a cap ends the call with no
 # answer at all, which types the raw transcript.

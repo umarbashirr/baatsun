@@ -74,8 +74,8 @@ const CLEANUP_MODEL_LABELS = {
 // need much; higher is slower and bills the thinking as output tokens.
 const REASONING_LABELS = {
   none: { label: 'None', hint: 'Fastest. Answers without thinking first' },
-  low: { label: 'Low', hint: 'Quick, with a little thought' },
-  medium: { label: 'Medium', hint: 'The default. A good balance for proofreading' },
+  low: { label: 'Low', hint: 'The default. Quick, with a little thought' },
+  medium: { label: 'Medium', hint: 'More thought, a few seconds slower' },
   high: { label: 'High', hint: 'Slowest. Rarely needed for dictation' },
 }
 const isReasoningModel = (m) => /^(gpt-6|gpt-5|o1|o3|o4)/.test(m || '')
@@ -816,7 +816,7 @@ export default function Settings({ setGuard }) {
                   hint="How much the model thinks before correcting. Higher is slower, and the thinking is billed"
                 >
                   <Select
-                    value={cfg.cleanup_reasoning || 'medium'}
+                    value={cfg.cleanup_reasoning || 'low'}
                     onChange={pick('cleanup_reasoning')}
                     options={opts(choices.cleanup_reasoning || ['none', 'low', 'medium', 'high'], REASONING_LABELS)}
                   />
