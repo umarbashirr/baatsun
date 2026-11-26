@@ -260,34 +260,44 @@ compositor.
 
 ### Quick install (Ubuntu/Debian)
 
-No clone needed — this downloads the latest `.deb` from
-[Releases](https://github.com/umarbashirr/baatsun/releases) and installs it
-with `apt`:
+No clone needed. Run this **as yourself** (not with `sudo` — it asks for your
+password only when installing the package):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/umarbashirr/baatsun/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/umarbashirr/baatsun/main/install.sh | bash
 ```
 
-This pulls in all system dependencies (`ydotool`, GTK4, PipeWire, `python3-dev`)
-automatically via `apt`, builds the `faster-whisper`/`numpy` virtualenv under
-`/opt/baatsun`, activates the ydotool udev rule, and adds you to the `input`
-group. Watch the output at the end for next steps — typically:
+It downloads the latest `.deb` from
+[Releases](https://github.com/umarbashirr/baatsun/releases), checks its
+SHA-256, installs it with `apt` (pulling in `ydotool`, GTK4, PipeWire,
+`wl-clipboard`, `python3-dev` and the Electron runtime libraries), builds the
+hash-pinned speech-recognition virtualenv under `/opt/baatsun`, activates the
+ydotool udev rule, adds you to the `input` group, and **enables and starts the
+`baatsun` service for you**. Then:
 
-1. Log out and back in (one-time, so the new `input` group membership takes
-   effect).
-2. `systemctl --user enable --now baatsun`
+1. If it says so, log out and back in once (so the new `input` group
+   membership takes effect).
+2. Open **Baatsun** from your app launcher, pick your language in Settings,
+   and hold **Ctrl+Super** anywhere to dictate.
 
-Then skip ahead to [Usage](#usage). The pill autostarts on your next login
-(on GNOME this enables the bundled Shell extension; elsewhere it launches
-`baatsun-pill` if `gtk4-layer-shell` is installed — see
-[The pill](#the-pill) if it doesn't appear). The tray icon is installed but
-no longer autostarts by default; run `baatsun-tray` if you want it too.
-"Baatsun" shows up in your app launcher either way.
+The first start downloads the speech model (~250 MB); `journalctl --user -u
+baatsun -f` shows `model loaded` when it's ready.
 
-Prefer to grab the file yourself instead of piping a script into `sudo`?
-Download the `.deb` from the
-[Releases page](https://github.com/umarbashirr/baatsun/releases) and run
-`sudo apt install ./baatsun_*_all.deb`.
+Options go after `bash -s --`:
+
+```bash
+# a specific release
+curl -fsSL https://raw.githubusercontent.com/umarbashirr/baatsun/main/install.sh | bash -s -- --version v0.11.0
+# a .deb you already downloaded (its .sha256 is checked if it's next to it)
+./install.sh --deb ~/Downloads/baatsun_0.11.0_amd64.deb
+# install without starting the service
+curl -fsSL https://raw.githubusercontent.com/umarbashirr/baatsun/main/install.sh | bash -s -- --no-start
+# uninstall (keeps your settings and history)
+curl -fsSL https://raw.githubusercontent.com/umarbashirr/baatsun/main/install.sh | bash -s -- --uninstall
+```
+
+The old `| sudo bash` form still works: it installs for the user behind the
+`sudo`. The pill and tray icon start on your next login.
 
 ### Build from source
 
