@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/umarbashirr/baatsun/security/advisories/new
+    about: Report it privately, not as a public issue.
+  - name: Install and troubleshooting guide
+    url: https://github.com/umarbashirr/baatsun#troubleshooting
+    about: Answers to the most common first-install problems.
