@@ -110,6 +110,53 @@ function StepIcon({ status }) {
   return <span className="mx-[5px] h-2.5 w-2.5 rounded-full border-2 border-sand-2" />
 }
 
+/**
+ * The installed version, and a way to look for a newer one without waiting
+ * for the next launch. Finding one opens the same dialog the launch check does.
+ */
+function UpdatesSection({ updater }) {
+  const [checking, setChecking] = useState(false)
+  const [error, setError] = useState('')
+  const info = updater?.info
+
+  const check = async () => {
+    setChecking(true)
+    setError('')
+    try {
+      const result = await updater.check()
+      if (result?.available) updater.open()
+    } catch (err) {
+      setError(err.message || String(err))
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  let hint = 'Baatsun checks for a new version each time it opens'
+  if (error) hint = error
+  else if (info?.supported === false) hint = 'Updates are only available for the .deb install'
+  else if (info?.available) hint = `Version ${info.latest} is available`
+  else if (info?.supported) hint = 'You’re on the latest version'
+
+  return (
+    <Section title="Updates">
+      <Card>
+        <Field label={info?.current ? `Baatsun ${info.current}` : 'Baatsun'} hint={hint}>
+          {info?.available ? (
+            <Button variant="primary" onClick={() => updater.open()}>
+              Update to {info.latest}
+            </Button>
+          ) : (
+            <Button onClick={check} disabled={checking || info?.supported === false}>
+              {checking ? 'Checking…' : 'Check for updates'}
+            </Button>
+          )}
+        </Field>
+      </Card>
+    </Section>
+  )
+}
+
 const COPY = {
   save: {
     working: (restart) => ({
@@ -429,7 +476,7 @@ function KeyField({ label, hint, provider, status, value, onChange, onCommit, pl
   )
 }
 
-export default function Settings({ setGuard }) {
+export default function Settings({ setGuard, updater }) {
   const [initial, setInitial] = useState(null)
   const [cfg, setCfg] = useState(null)
   const [choices, setChoices] = useState({})
@@ -846,6 +893,8 @@ export default function Settings({ setGuard }) {
           )}
         </Card>
       </Section>
+
+      <UpdatesSection updater={updater} />
 
       <Section title="Daemon">
         <Card>

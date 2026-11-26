@@ -278,6 +278,16 @@ compositor.
 
 ## Installation
 
+### Updating
+
+From 0.14.0 on, the app updates itself. When you open it and a newer release
+exists, a dialog offers it. **Update now** downloads the `.deb`, checks its
+SHA-256 and package name, installs it through the system password prompt
+(`pkexec apt-get install`), restarts the daemon and reopens the window.
+**Not now** leaves an *Update to x.y.z* button in the sidebar, and
+**Settings → Updates** can check at any time. Older versions update once more
+with the quick install command below.
+
 ### Quick install (Ubuntu/Debian)
 
 No clone needed. Run this **as yourself** (not with `sudo` — it asks for your
@@ -755,7 +765,12 @@ There are two exceptions, both opt-in and both off unless you turn them on:
   every dictation, whatever the window. This is the bigger of the two, and it is
   the only setting in Baatsun that takes your voice off this machine.
 
-Leave both off to keep the tool fully offline. Each has its own key file
+Separately, the **app window checks GitHub for a new release** each time it
+opens: one request to `api.github.com/repos/umarbashirr/baatsun/releases/latest`,
+carrying nothing about you or your dictation. The daemon, the pill and the tray
+never make it, so dictating with the window closed stays offline.
+
+Leave both off to keep dictation fully offline. Each has its own key file
 (`~/.config/baatsun/openai.key`, `~/.config/baatsun/elevenlabs.key`, both 0600),
 and neither key is ever written into `config.json`.
 

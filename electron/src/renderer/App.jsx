@@ -7,6 +7,7 @@ import History from './pages/History.jsx'
 import Costs from './pages/Costs.jsx'
 import Words from './pages/Words.jsx'
 import Settings from './pages/Settings.jsx'
+import UpdateDialog from './components/UpdateDialog.jsx'
 import { Badge, Button } from './components/ui.jsx'
 import {
   AlertDialog,
@@ -254,6 +255,22 @@ export default function App() {
     return () => window.removeEventListener('baatsun:config-saved', read)
   }, [daemon.connected])
 
+  // Updates: checked once when the window opens, and again on demand from
+  // Settings. A newer release opens the update dialog by itself; "Not now"
+  // leaves a reminder in the sidebar instead of asking again this session.
+  const [update, setUpdate] = useState(null)
+  const [updateOpen, setUpdateOpen] = useState(false)
+  const checkForUpdate = async ({ announce = false } = {}) => {
+    const info = await window.baatsun.checkUpdate()
+    setUpdate(info)
+    if (info?.available && announce) setUpdateOpen(true)
+    return info
+  }
+  useEffect(() => {
+    checkForUpdate({ announce: true }).catch(() => {})
+  }, [])
+  const updater = { info: update, check: checkForUpdate, open: () => setUpdateOpen(true) }
+
   // Dictate carries the live state in the nav, so it shows from any page.
   const recState = daemon.connected ? daemon.state.state : 'idle'
   const dictateMarker =
@@ -290,6 +307,16 @@ export default function App() {
         </div>
 
         <div className="no-drag flex flex-col gap-3 px-3 pb-4">
+          {update?.available && !updateOpen && (
+            <button
+              type="button"
+              onClick={() => setUpdateOpen(true)}
+              className="flex items-center gap-2.5 rounded-[12px] bg-mint px-3 py-2.5 text-left text-[14px] font-medium text-green transition-colors hover:bg-mint-2"
+            >
+              <span className="h-2 w-2 rounded-full bg-green" aria-hidden="true" />
+              Update to {update.latest}
+            </button>
+          )}
           <NavItem id="settings" label="Settings" current={page} onSelect={go} />
           <StatusCard daemon={daemon} config={config} onOpen={() => go('dictate')} />
         </div>
@@ -298,9 +325,16 @@ export default function App() {
       <main className="flex min-w-0 flex-1 flex-col">
         <TitleBar title={active.label} state={daemon.state} connected={daemon.connected} />
         <div key={page} className="animate-rise flex-1 overflow-y-auto px-8 pb-10 pt-4">
-          <Component daemon={daemon} onNavigate={go} setGuard={(fn) => (guard.current = fn)} />
+          <Component
+            daemon={daemon}
+            onNavigate={go}
+            setGuard={(fn) => (guard.current = fn)}
+            updater={updater}
+          />
         </div>
       </main>
+
+      <UpdateDialog info={update} open={updateOpen && !!update?.available} onOpenChange={setUpdateOpen} />
 
       <AlertDialog open={!!leaving} onOpenChange={(open) => !open && setLeaving(null)}>
         <AlertDialogContent>

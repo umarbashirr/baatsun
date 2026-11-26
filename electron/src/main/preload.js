@@ -31,6 +31,16 @@ contextBridge.exposeInMainWorld('baatsun', {
   saveConfig: (payload) => call('config:save', payload),
   restartDaemon: () => call('daemon:restart'),
 
+  checkUpdate: () => call('update:check'),
+  downloadUpdate: () => call('update:download'),
+  installUpdate: () => call('update:install'),
+  relaunch: () => call('update:relaunch'),
+  onUpdateProgress: (handler) => {
+    const listener = (_event, payload) => handler(payload)
+    ipcRenderer.on('update:progress', listener)
+    return () => ipcRenderer.removeListener('update:progress', listener)
+  },
+
   minimize: () => call('window:minimize'),
   maximize: () => call('window:maximize'),
   close: () => call('window:close'),

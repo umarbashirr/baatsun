@@ -19,6 +19,7 @@ const { execFile } = require('node:child_process')
 const daemon = require('./daemon')
 const store = require('./store')
 const keycheck = require('./keycheck')
+const updater = require('./updater')
 
 const DEV_SERVER = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173'
 // Opt in, never fall in. This decides whether the window loads the built
@@ -220,6 +221,13 @@ handle('daemon:restart', () =>
     )
   }),
 )
+
+handle('update:check', () => updater.check())
+handle('update:download', () =>
+  updater.download((progress) => mainWindow?.webContents.send('update:progress', progress)),
+)
+handle('update:install', () => updater.install())
+handle('update:relaunch', () => updater.relaunch())
 
 handle('window:minimize', () => mainWindow?.minimize())
 handle('window:maximize', () =>
