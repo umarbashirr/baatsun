@@ -9,6 +9,7 @@ ydotool.
 """
 import array
 import json
+import math
 import os
 import signal
 import socket
@@ -135,6 +136,8 @@ state = {
     # Scribe calls while the mic is still open. None for the local backend.
     "capture": None,
     "mode": DICTATE,
+    # Where the text will land, as the recording started, for the pill.
+    "surface": None,
 }
 # The last text this daemon put into a window, so "scratch that" can take it
 # back. Only honoured in the same window, and only for a while.
@@ -653,6 +656,61 @@ class LiveScribe:
             log(f"elevenlabs chunk {n} failed")
 
 
+# The pill's level meter: how often the mic level is sampled and broadcast, and
+# the loudness range mapped onto 0..1. Quiet room noise sits near the floor,
+# ordinary speech fills most of the range.
+LEVEL_INTERVAL = 0.06
+LEVEL_FLOOR_DB = -55.0
+LEVEL_RANGE_DB = 45.0
+
+
+def watch_levels(wav_path):
+    """Broadcast the mic level while this recording runs.
+
+    Reads the samples pw-record has appended since the last look and sends
+    their loudness, so the pill's bars follow your voice instead of playing
+    a canned animation. Cheap: ~1 KB of audio per tick, and no subscriber
+    means no work beyond the read.
+    """
+    offset = None
+    while state["recording"] and state["wav_path"] == wav_path:
+        time.sleep(LEVEL_INTERVAL)
+        try:
+            size = os.path.getsize(wav_path)
+            if offset is None:
+                offset = _wav_pcm_offset(wav_path)
+                if size <= offset:
+                    offset = None
+                    continue
+                # Start from the newest audio, not the beginning.
+                offset = max(offset, size - int(LEVEL_INTERVAL * BYTES_PER_SECOND))
+            if size - offset < 64:
+                continue
+            with open(wav_path, "rb") as handle:
+                handle.seek(offset)
+                chunk = handle.read(size - offset)
+        except OSError:
+            continue
+        offset += len(chunk) - (len(chunk) % 2)
+        samples = array.array("h")
+        samples.frombytes(chunk[: len(chunk) - (len(chunk) % 2)])
+        if not samples:
+            continue
+        rms = math.sqrt(sum(x * x for x in samples) / len(samples))
+        db = 20 * math.log10(max(rms, 1.0) / 32768.0)
+        level = min(1.0, max(0.0, (db - LEVEL_FLOOR_DB) / LEVEL_RANGE_DB))
+        broadcast({"type": "level", "v": round(level, 2)})
+
+
+def focus_surface():
+    """Where the next text will land, for the pill's tag; None for Baatsun itself."""
+    with focus_lock:
+        app, title = focus["app"], focus["title"]
+    if not app or "baatsun" in app.lower():
+        return None
+    return baatsun_context.surface(app, title)
+
+
 def start_recording(mode=DICTATE):
     """Start a recording. Callers hold state_lock. Returns True if one started.
 
@@ -703,7 +761,10 @@ def start_recording(mode=DICTATE):
     timer.daemon = True
     state["timer"] = timer
     timer.start()
-    broadcast_state("listening", mode=mode)
+    state["surface"] = focus_surface()
+    broadcast_state("listening", mode=mode, surface=state["surface"])
+    threading.Thread(target=watch_levels, args=(wav_path,), name="levels",
+                     daemon=True).start()
     log(f"recording started ({mode}) -> {wav_path}")
     return True
 
@@ -882,7 +943,7 @@ def _finish_recording(proc, wav_path, secs, capture, mode=DICTATE):
         proc.kill()
         proc.wait()
 
-    broadcast_state("transcribing")
+    broadcast_state("transcribing", mode=mode, surface=state.get("surface"))
 
     # A remote transcription that fails takes the dictation with it — there is
     # no raw text to fall back on, the way a failed cleanup still has the
@@ -1051,7 +1112,9 @@ def deliver(text, app, title, raw=None, secs=None, usage=None, stt=None,
                               surface=baatsun_context.surface(app, title))
     broadcast({"type": "transcript", "entry": entry})
     if inserted:
-        broadcast_state("idle")
+        # "result" rather than "reason": reasons are problems the GUIs explain,
+        # this is the pill's cue to show a brief confirmation.
+        broadcast_state("idle", result="pasted")
     else:
         # Saved in history either way, so it can be copied from there.
         broadcast_state("idle", reason="insert_failed", error=how)
@@ -1119,7 +1182,8 @@ def finish_voice_edit(instruction, app, title, secs, stt_usage):
                               mode="edit" if selection else "compose",
                               surface=surface, force_raw=True)
     broadcast({"type": "transcript", "entry": entry})
-    broadcast_state("idle", **({} if inserted else {"reason": "insert_failed", "error": how}))
+    broadcast_state("idle", **({"result": "edited"} if inserted
+                               else {"reason": "insert_failed", "error": how}))
 
 
 def finish_notes(text, app, title, secs, stt_usage, heard=None):
@@ -1157,7 +1221,8 @@ def finish_notes(text, app, title, secs, stt_usage, heard=None):
     if not inserted:
         broadcast_state("idle", reason="insert_failed", error=how)
     else:
-        broadcast_state("idle", reason=None if result else ("needs_key" if not api_key else "notes_failed"))
+        broadcast_state("idle", reason=None if result else ("needs_key" if not api_key else "notes_failed"),
+                        result="notes")
 
 
 def handle_notes():
@@ -1348,7 +1413,7 @@ def refresh_chord():
     if now_held and command and state["recording"] and state["mode"] == DICTATE:
         # The modifier joined after the chord: still a voice edit.
         state["mode"] = COMMAND
-        broadcast_state("listening", mode=COMMAND)
+        broadcast_state("listening", mode=COMMAND, surface=state.get("surface"))
         log("voice edit — the modifier joined mid-recording")
     elif not now_held and hotkey_state["held"]:
         hotkey_state["held"] = False

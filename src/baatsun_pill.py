@@ -14,13 +14,16 @@ fullscreen windows), reserves no space, and — the part that matters most for
 baatsun — is created with keyboard mode NONE and an empty input region, so it
 can never take focus or a click away from whatever the user is dictating into.
 
-There is one dark pill and it is always the same dark pill. It never changes
-colour; it only opens and closes, and everything else happens inside it:
+One deep-green pill, the app's own colour, that only opens and closes;
+everything else happens inside it:
 
-    idle          a 6px-tall bar, empty
-    listening     opens to hold a row of white level bars
-    transcribing  opens to hold a white spinner
-    offline       the closed bar, receded (no daemon on the socket)
+    idle          a small capsule holding five resting dots
+    listening     opens to hold level bars that follow your voice
+    transcribing  opens to hold a spinner
+    offline       the closed capsule, receded (no daemon on the socket)
+
+The GNOME extension also shows a tag (Email, Edit…) and a brief result; this
+fallback keeps to the shapes, since it is untested on most compositors.
 
 Keeping one shape and one colour is deliberate. This thing lives over
 arbitrary content, so it should be a single predictable object that opens and
@@ -57,8 +60,10 @@ SOCKET_PATH = os.path.join(
     os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}", "baatsun.sock")
 
 # Closed: a bar, thin enough to read as an indicator and nothing else.
-REST_WIDTH = 68.0
-REST_HEIGHT = 6.0
+REST_WIDTH = 40.0
+REST_HEIGHT = 10.0
+# The resting dots, dimmer than live bars.
+REST_BARS_ALPHA = 0.6
 # Open: tall enough for the spinner plus 2px of breathing room top and bottom,
 # and narrower, so opening reads as the bar gathering itself up rather than
 # just getting fatter.
@@ -82,19 +87,18 @@ BOTTOM_MARGIN = round(PILL_BOTTOM_MARGIN - (SURFACE_HEIGHT - REST_HEIGHT) / 2)
 MORPH_RATE = 14.0
 FADE_RATE = 18.0
 
-# The level bars: 5*3 + 4*4 = 31 wide, centred in the open pill.
+# The level bars: 5*3 + 4*3 = 27 wide, centred in the pill.
 BAR_COUNT = 5
 BAR_WIDTH = 3.0
-BAR_SPACING = 4.0
+BAR_SPACING = 3.0
 BAR_MAX_HEIGHT = 11.0
 BAR_MIN_HEIGHT = 3.0
 BAR_RADIUS = 1.5
 
-# Every bar walks to a fresh random height on its own clock, which is what
-# makes the row read as a level meter rather than a synchronised pattern.
-# Nothing here is driven by the actual microphone — the daemon records straight
-# to a file and broadcasts no levels — so this says "capturing", not
-# "capturing *this* loudly".
+# The daemon broadcasts the mic level while recording and the bars follow it.
+# When none arrive (an older daemon), every bar walks to a random height on its
+# own clock instead.
+LEVEL_STALE = 0.4
 HOP_MIN_INTERVAL = 0.11
 HOP_MAX_INTERVAL = 0.23
 # How much shorter the outermost bars run than the centre ones, which is what
@@ -112,12 +116,12 @@ SPINNER_ARC = 1.9     # radians of bright head, of a 2*pi ring
 
 RECONNECT_INTERVAL = 3
 
-PILL_FILL = (0.11, 0.11, 0.12, 0.94)
-PILL_BORDER = (1.0, 1.0, 1.0, 0.16)
-PILL_FILL_OFFLINE = (0.11, 0.11, 0.12, 0.4)
-PILL_BORDER_OFFLINE = (1.0, 1.0, 1.0, 0.06)
+PILL_FILL = (0.122, 0.239, 0.18, 0.96)          # #1f3d2e
+PILL_BORDER = (0.98, 0.973, 0.953, 0.18)
+PILL_FILL_OFFLINE = (0.122, 0.239, 0.18, 0.45)
+PILL_BORDER_OFFLINE = (0.98, 0.973, 0.953, 0.06)
 
-WHITE = (1.0, 1.0, 1.0)
+WHITE = (0.98, 0.973, 0.953)                    # cream, #faf8f3
 SPINNER_TRACK_ALPHA = 0.22
 SPINNER_HEAD_ALPHA = 0.95
 
@@ -171,6 +175,9 @@ class Pill(Gtk.DrawingArea):
         self._spinner_alpha = 0.0
         self._spin = 0.0
         self._last_frame = None
+        # The latest mic level from the daemon, and when it arrived.
+        self._level = 0.0
+        self._level_at = 0.0
         # Forces one repaint on the next frame; see set_state and _tick.
         self._dirty = True
 
@@ -191,6 +198,10 @@ class Pill(Gtk.DrawingArea):
         for bar in self._bars:
             bar.reroll_at = 0.0
 
+    def set_level(self, level):
+        self._level = max(0.0, min(1.0, level))
+        self._level_at = time.monotonic()
+
     # ------------------------------------------------------------- animation
 
     def _tick(self, _widget, frame_clock):
@@ -210,7 +221,8 @@ class Pill(Gtk.DrawingArea):
         self._height += (target_height - self._height) * morph
 
         fade = 1.0 - math.exp(-dt * FADE_RATE)
-        self._bars_alpha += ((1.0 if listening else 0.0) - self._bars_alpha) * fade
+        bars_target = 1.0 if listening else (REST_BARS_ALPHA if not open_ and self.state != "offline" else 0.0)
+        self._bars_alpha += (bars_target - self._bars_alpha) * fade
         self._spinner_alpha += (
             (1.0 if transcribing else 0.0) - self._spinner_alpha) * fade
         self._spin = (self._spin + dt / SPINNER_PERIOD) % 1.0
@@ -218,7 +230,15 @@ class Pill(Gtk.DrawingArea):
         elapsed = time.monotonic() - self._phase_start
         approach = 1.0 - math.exp(-dt * BAR_APPROACH)
         for i, bar in enumerate(self._bars):
-            bar.target = self._bar_target(i, elapsed) if listening else BAR_MIN_HEIGHT
+            if not listening:
+                bar.target = BAR_MIN_HEIGHT
+            elif time.monotonic() - self._level_at < LEVEL_STALE:
+                centre = (BAR_COUNT - 1) / 2.0
+                allowance = 1.0 - 0.6 * abs(i - centre) / centre
+                reach = self._level * allowance * random.uniform(0.6, 1.0)
+                bar.target = BAR_MIN_HEIGHT + (BAR_MAX_HEIGHT - BAR_MIN_HEIGHT) * min(1.0, reach)
+            else:
+                bar.target = self._bar_target(i, elapsed)
             bar.height += (bar.target - bar.height) * approach
 
         # Repaint only while something is actually moving.
@@ -239,7 +259,7 @@ class Pill(Gtk.DrawingArea):
             or transcribing
             or abs(target_width - self._width) > 0.05
             or abs(target_height - self._height) > 0.05
-            or self._bars_alpha > 0.004
+            or abs(bars_target - self._bars_alpha) > 0.004
             or self._spinner_alpha > 0.004
         )
         if moving or self._dirty:
@@ -399,7 +419,14 @@ class StateListener:
                     self._handle_event(event)
 
     def _handle_event(self, event):
-        if event.get("type") != "state":
+        kind = event.get("type")
+        if kind == "level":
+            try:
+                GLib.idle_add(self.pill.set_level, float(event.get("v") or 0))
+            except (TypeError, ValueError):
+                pass
+            return
+        if kind != "state":
             return
         GLib.idle_add(self.pill.set_state, event.get("state", "idle"))
 

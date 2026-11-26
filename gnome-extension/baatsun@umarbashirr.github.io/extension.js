@@ -11,19 +11,21 @@
  * State comes from the daemon's own unix socket (the same "subscribe" stream
  * the tray and history window use), read here with Gio. No extra IPC.
  *
- * There is one dark pill and it is always the same dark pill. It never changes
- * colour; it only opens and closes, and everything else happens inside it:
+ * One deep-green pill, the app's own colour, that opens and closes; everything
+ * else happens inside it:
  *
- *     idle          a 6px-tall bar, empty
- *     hovered       opens to hold a white ▶ / ■, and narrows to a button
- *     listening     opens to hold a row of white level bars
- *     transcribing  opens to hold a white spinner
+ *     idle          a small capsule holding five resting dots
+ *     hovered       opens to hold a ▶ / ■ button
+ *     listening     a coral recording dot, level bars that follow your voice,
+ *                   and a tag for where the text will land (Email, Chat…) or
+ *                   what the recording is for (Edit, Notes)
+ *     transcribing  a spinner and the same tag
+ *     finished      a word for a moment: "✓ Pasted", "Too short"
  *
  * Keeping one shape and one colour is deliberate. This thing lives over
  * arbitrary content, so it should be a single predictable object that opens
  * and closes rather than a patch of screen that changes colour — and a dark
- * pill stays legible over both a white document and a dark terminal, where a
- * tinted translucent bar does not.
+ * green stays legible over both a white document and a dark terminal.
  *
  * The pill is also a control. Hovering it opens it into a start/stop button
  * that writes "toggle" back down the same socket, which is what makes a
@@ -42,15 +44,51 @@ import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
-// Closed: a bar, thin enough to read as an indicator and nothing else.
-const REST_WIDTH = 68;
-const REST_HEIGHT = 6;
-// Open: tall enough for ICON_SIZE plus 2px of breathing room top and bottom,
-// and narrower, so opening reads as the bar gathering itself into a button
-// rather than just getting fatter.
-const ACTIVE_WIDTH = 52;
-const ACTIVE_HEIGHT = 16;
+// Closed: a small capsule holding the level bars at rest, which reads as
+// "a microphone meter, waiting" rather than as a stray line on the screen.
+const REST_WIDTH = 40;
+const REST_HEIGHT = 10;
+// Open: sized to its contents, with this much padding either side and never
+// narrower than a button.
+const ACTIVE_HEIGHT = 26;
+const ACTIVE_PADDING = 12;
+const ACTIVE_MIN_WIDTH = 44;
 const ICON_SIZE = 12;
+// The resting dots, dimmer than a live bar.
+const REST_BARS_OPACITY = 150;
+// How long a finished dictation's word stays up.
+const MESSAGE_MS = 1600;
+// A level older than this means the daemon isn't sending any (an older
+// version), so the bars fall back to their own animation.
+const LEVEL_STALE_MS = 400;
+
+// The tag: what a recording is for, else where its text will land.
+const TAGS = {
+    command: 'Edit',
+    notes: 'Notes',
+    email: 'Email',
+    chat: 'Chat',
+    post: 'Post',
+    social: 'Post',
+    docs: 'Doc',
+    code: 'Code',
+};
+// The word shown when a dictation ends, and whether it is a problem.
+const RESULTS = {
+    pasted: ['✓ Pasted', false],
+    edited: ['✓ Edited', false],
+    notes: ['✓ Notes saved', false],
+    scratched: ['Removed', false],
+    too_short: ['Too short', true],
+    empty: ['Didn’t catch that', true],
+    failed: ['Failed', true],
+    insert_failed: ['Not pasted, see History', true],
+    mic_failed: ['No microphone', true],
+    nothing_to_scratch: ['Nothing to remove', true],
+    needs_key: ['Needs an API key', true],
+    edit_failed: ['Edit failed', true],
+    notes_failed: ['Saved, not organised', true],
+};
 
 const MORPH_DURATION = 220;
 const CONTENT_FADE = 130;
@@ -66,12 +104,11 @@ const PILL_BOTTOM_MARGIN = 64;
 // from the window underneath, so it is kept barely larger than the widest and
 // tallest the pill ever gets — though deliberately much taller than the 6px
 // closed bar, which is far too thin to ask anyone to hit.
-const HOVER_WIDTH = 88;
-const HOVER_HEIGHT = 28;
+const HOVER_WIDTH = 64;
+const HOVER_HEIGHT = 34;
 
 // The level bars. Their gap is the stylesheet's `spacing` (St.BoxLayout takes
-// it from CSS, not from a property), so the row measures 5*3 + 4*4 = 31,
-// centred in ACTIVE_WIDTH.
+// it from CSS, not from a property), so the row measures 5*3 + 4*3 = 27.
 const BAR_COUNT = 5;
 const BAR_WIDTH = 3;
 // Bars are allocated at full height and scaled down, so the row never
@@ -80,11 +117,9 @@ const BAR_WIDTH = 3;
 const BAR_HEIGHT = 11;
 const BAR_REST = 3 / BAR_HEIGHT;
 
-// Every bar hops to a fresh random height on its own clock, which is what
-// makes the row read as a level meter rather than a synchronised pattern.
-// Nothing here is driven by the actual microphone — the daemon records
-// straight to a file and broadcasts no levels — so this says "capturing", not
-// "capturing *this* loudly".
+// The daemon broadcasts the real mic level while recording, and the bars
+// follow it. These hops are the fallback for a daemon too old to send levels:
+// every bar walks to a random height on its own clock.
 const HOP_MIN_DURATION = 110;
 const HOP_MAX_DURATION = 230;
 // How often the meter checks which bars are due a new height. Well under
@@ -117,6 +152,12 @@ export default class BaatsunPillExtension extends Extension {
         this._state = null;
         this._hovered = false;
         this._shown = null;
+        this._mode = null;
+        this._surface = null;
+        this._flashText = null;
+        this._flashBad = false;
+        this._flashId = null;
+        this._lastLevelAt = 0;
         this._socketPath = GLib.build_filenamev([GLib.get_user_runtime_dir(), 'baatsun.sock']);
 
         // Not reactive itself: the container below owns the pointer, so
@@ -150,11 +191,30 @@ export default class BaatsunPillExtension extends Extension {
         });
         this._pill.add_child(this._content);
 
+        // Everything that can sit in the open pill, in one row. What shows is
+        // decided by `visible`, so the row's natural width is what the pill
+        // opens to.
+        this._row = new St.BoxLayout({
+            style_class: 'baatsun-pill-row',
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._content.add_child(this._row);
+
+        this._dot = new St.Widget({
+            style_class: 'baatsun-pill-dot',
+            width: 6,
+            height: 6,
+            y_align: Clutter.ActorAlign.CENTER,
+            visible: false,
+        });
+        this._row.add_child(this._dot);
+
         this._bars = new St.BoxLayout({
             style_class: 'baatsun-pill-bars',
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
-            opacity: 0,
+            opacity: REST_BARS_OPACITY,
         });
         this._barActors = [];
         for (let i = 0; i < BAR_COUNT; i++) {
@@ -171,7 +231,7 @@ export default class BaatsunPillExtension extends Extension {
             this._barActors.push(bar);
             this._bars.add_child(bar);
         }
-        this._content.add_child(this._bars);
+        this._row.add_child(this._bars);
 
         this._spinner = new St.DrawingArea({
             width: SPINNER_SIZE,
@@ -179,19 +239,34 @@ export default class BaatsunPillExtension extends Extension {
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
             pivot_point: new Graphene.Point({x: 0.5, y: 0.5}),
-            opacity: 0,
+            visible: false,
         });
         this._spinner.connect('repaint', area => this._drawSpinner(area));
-        this._content.add_child(this._spinner);
+        this._row.add_child(this._spinner);
 
         this._controlIcon = new St.Icon({
+            style_class: 'baatsun-pill-icon',
             icon_name: 'media-playback-start-symbolic',
             icon_size: ICON_SIZE,
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
-            opacity: 0,
+            visible: false,
         });
-        this._content.add_child(this._controlIcon);
+        this._row.add_child(this._controlIcon);
+
+        this._tag = new St.Label({
+            style_class: 'baatsun-pill-tag',
+            y_align: Clutter.ActorAlign.CENTER,
+            visible: false,
+        });
+        this._row.add_child(this._tag);
+
+        this._message = new St.Label({
+            style_class: 'baatsun-pill-message',
+            y_align: Clutter.ActorAlign.CENTER,
+            visible: false,
+        });
+        this._row.add_child(this._message);
 
         // can_focus stays false: this is the whole reason the pill can be
         // clickable at all. Taking keyboard focus would move it off the window
@@ -261,6 +336,10 @@ export default class BaatsunPillExtension extends Extension {
             GLib.source_remove(this._reconnectId);
             this._reconnectId = null;
         }
+        if (this._flashId) {
+            GLib.source_remove(this._flashId);
+            this._flashId = null;
+        }
         if (this._cancellable) {
             this._cancellable.cancel();
             this._cancellable = null;
@@ -277,6 +356,10 @@ export default class BaatsunPillExtension extends Extension {
             this._barActors = [];
             this._spinner = null;
             this._controlIcon = null;
+            this._row = null;
+            this._dot = null;
+            this._tag = null;
+            this._message = null;
         }
     }
 
@@ -299,8 +382,9 @@ export default class BaatsunPillExtension extends Extension {
         // Monitor geometry and actor sizes are both in logical pixels here, so
         // no scale-factor arithmetic is needed.
         const bottom = monitor.y + monitor.height - PILL_BOTTOM_MARGIN;
+        const width = this._container.width;
         this._container.set_position(
-            Math.round(monitor.x + (monitor.width - HOVER_WIDTH) / 2),
+            Math.round(monitor.x + (monitor.width - width) / 2),
             Math.round(bottom - (HOVER_HEIGHT + REST_HEIGHT) / 2));
     }
 
@@ -358,8 +442,29 @@ export default class BaatsunPillExtension extends Extension {
 
     /* ---------------------------------------------------------------- state */
 
-    _applyState(state) {
-        if (!this._pill || state === this._state)
+    _applyState(state, event = {}) {
+        if (!this._pill)
+            return;
+
+        if (state === 'listening' || state === 'transcribing') {
+            const tagChanged = this._mode !== (event.mode ?? null) ||
+                this._surface !== (event.surface ?? null);
+            this._mode = event.mode ?? null;
+            this._surface = event.surface ?? null;
+            this._clearFlash();
+            if (tagChanged && state === this._state) {
+                // Same state, new tag: an edit that began as a dictation.
+                this._shown = null;
+                this._refresh();
+                return;
+            }
+        } else if (state === 'idle') {
+            const key = event.reason || event.result;
+            if (key && RESULTS[key] && this._state !== null)
+                this._flash(...RESULTS[key]);
+        }
+
+        if (state === this._state)
             return;
 
         this._state = state;
@@ -391,9 +496,11 @@ export default class BaatsunPillExtension extends Extension {
         if (this._hovered && this._canToggle())
             show = 'button';
         else if (this._state === 'listening')
-            show = 'bars';
+            show = 'listening';
         else if (this._state === 'transcribing')
-            show = 'spinner';
+            show = 'transcribing';
+        else if (this._flashText)
+            show = 'message';
         else
             show = 'none';
 
@@ -404,30 +511,139 @@ export default class BaatsunPillExtension extends Extension {
             ? 'media-playback-stop-symbolic'
             : 'media-playback-start-symbolic';
 
-        if (show === this._shown)
+        const key = `${show}|${this._mode}|${this._surface}|${this._flashText}`;
+        if (key === this._shown)
             return;
-        this._shown = show;
+        this._shown = key;
+
+        const tag = TAGS[this._mode] || TAGS[this._surface] || '';
+        this._tag.text = tag;
+        if (this._flashText) {
+            this._message.text = this._flashText;
+            if (this._flashBad)
+                this._message.add_style_class_name('baatsun-pill-message-bad');
+            else
+                this._message.remove_style_class_name('baatsun-pill-message-bad');
+        }
+
+        const wants = {
+            dot: show === 'listening',
+            bars: show === 'listening' || show === 'none',
+            spinner: show === 'transcribing',
+            icon: show === 'button',
+            tag: (show === 'listening' || show === 'transcribing') && tag !== '',
+            message: show === 'message',
+        };
+        this._reveal(this._dot, wants.dot);
+        this._reveal(this._bars, wants.bars, show === 'none' ? REST_BARS_OPACITY : 255);
+        this._reveal(this._spinner, wants.spinner);
+        this._reveal(this._controlIcon, wants.icon);
+        this._reveal(this._tag, wants.tag);
+        this._reveal(this._message, wants.message);
+
+        this._runDot(wants.dot);
+        this._runBars(show === 'listening');
+        this._runSpinner(wants.spinner);
 
         const open = show !== 'none';
+        let width = REST_WIDTH;
+        if (open) {
+            const [, natural] = this._row.get_preferred_width(-1);
+            width = Math.max(ACTIVE_MIN_WIDTH, Math.ceil(natural) + ACTIVE_PADDING * 2);
+        }
+        this._fitContainer(width);
         this._pill.ease({
-            width: open ? ACTIVE_WIDTH : REST_WIDTH,
+            width,
             height: open ? ACTIVE_HEIGHT : REST_HEIGHT,
             duration: MORPH_DURATION,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
         });
-
-        this._runBars(show === 'bars');
-        this._runSpinner(show === 'spinner');
-        this._fade(this._bars, show === 'bars');
-        this._fade(this._spinner, show === 'spinner');
-        this._fade(this._controlIcon, show === 'button');
     }
 
-    _fade(actor, visible) {
+    /* Show or hide one thing in the row. Showing fades it in; hiding is
+     * immediate, so the row's width already describes what is about to show. */
+    _reveal(actor, visible, opacity = 255) {
+        if (!visible) {
+            actor.remove_transition('opacity');
+            actor.visible = false;
+            return;
+        }
+        if (!actor.visible) {
+            actor.opacity = 0;
+            actor.visible = true;
+        }
         actor.ease({
-            opacity: visible ? 255 : 0,
+            opacity,
             duration: CONTENT_FADE,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+        });
+    }
+
+    /* The hover box tracks the pill, so a wide message is still clickable
+     * across its width and the hole it makes in the screen stays small when
+     * the pill is closed. Grown before the pill eases open, so it never clips
+     * the pill on the way. */
+    _fitContainer(pillWidth) {
+        const width = Math.max(HOVER_WIDTH, pillWidth + 16);
+        if (width === this._container.width)
+            return;
+        this._container.width = width;
+        this._reposition();
+    }
+
+    /* A word for a moment after a dictation ends, then back to rest. */
+    _flash(text, bad) {
+        this._clearFlash();
+        this._flashText = text;
+        this._flashBad = bad;
+        this._flashId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, MESSAGE_MS, () => {
+            this._flashId = null;
+            this._flashText = null;
+            this._refresh();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _clearFlash() {
+        if (this._flashId) {
+            GLib.source_remove(this._flashId);
+            this._flashId = null;
+        }
+        this._flashText = null;
+    }
+
+    /* The recording dot breathes while the mic is open. */
+    _runDot(on) {
+        this._dot.remove_transition('opacity');
+        if (!on)
+            return;
+        this._dot.ease({
+            opacity: 150,
+            duration: 600,
+            mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
+            repeatCount: -1,
+            autoReverse: true,
+        });
+    }
+
+    /* One level from the daemon: every bar follows it, the middle ones
+     * reaching furthest, with a little jitter so the row doesn't move as one
+     * flat block. */
+    _onLevel(level) {
+        this._lastLevelAt = GLib.get_monotonic_time() / 1000;
+        if (this._state !== 'listening' || !this._barActors.length)
+            return;
+        const centre = (BAR_COUNT - 1) / 2;
+        this._barActors.forEach((bar, i) => {
+            // Wider falloff than the fallback hops, so even a steady voice
+            // gives the row a crest rather than five equal bars.
+            const allowance = 1 - 0.6 * (Math.abs(i - centre) / centre);
+            const jitter = 0.6 + Math.random() * 0.4;
+            bar.ease({
+                scale_y: BAR_REST + (1 - BAR_REST) * Math.min(1, level * allowance * jitter),
+                duration: 90,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            });
         });
     }
 
@@ -492,6 +708,9 @@ export default class BaatsunPillExtension extends Extension {
      * mid-flight. */
     _hopDue() {
         const now = GLib.get_monotonic_time() / 1000;
+        // Real levels are arriving; they drive the bars instead.
+        if (now - this._lastLevelAt < LEVEL_STALE_MS)
+            return;
 
         this._barActors.forEach((bar, i) => {
             if (now < this._barDue[i])
@@ -570,11 +789,11 @@ export default class BaatsunPillExtension extends Extension {
         cr.setLineWidth(SPINNER_WIDTH);
         cr.setLineCap(Cairo.LineCap.ROUND);
 
-        cr.setSourceRGBA(1, 1, 1, 0.22);
+        cr.setSourceRGBA(0.98, 0.97, 0.95, 0.22);
         cr.arc(0, 0, radius, 0, 2 * Math.PI);
         cr.stroke();
 
-        cr.setSourceRGBA(1, 1, 1, 0.95);
+        cr.setSourceRGBA(0.98, 0.97, 0.95, 0.95);
         cr.arc(0, 0, radius, -Math.PI / 2, -Math.PI / 2 + SPINNER_ARC);
         cr.stroke();
 
@@ -590,6 +809,7 @@ export default class BaatsunPillExtension extends Extension {
             bar.remove_all_transitions();
         this._pill?.remove_all_transitions();
         this._spinner?.remove_all_transitions();
+        this._dot?.remove_all_transitions();
     }
 
     /* ---------------------------------------------------------------- focus */
@@ -715,7 +935,9 @@ export default class BaatsunPillExtension extends Extension {
                     try {
                         const event = JSON.parse(line);
                         if (event.type === 'state')
-                            this._applyState(event.state ?? 'idle');
+                            this._applyState(event.state ?? 'idle', event);
+                        else if (event.type === 'level')
+                            this._onLevel(Number(event.v) || 0);
                     } catch (e) {
                         // A malformed line is not worth dropping the stream over.
                     }

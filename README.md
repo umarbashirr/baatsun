@@ -51,12 +51,13 @@ curl -fsSL https://raw.githubusercontent.com/umarbashirr/baatsun/main/install.sh
   works in any app, not just ones with dictation support built in.
 - **No shortcut registration needed** — reads the keyboard directly below the
   compositor, so it works the same way on any desktop environment.
-- **Always-on-top pill** — a thin dark pill near the bottom centre of the
-  screen, above every window (including fullscreen ones), that never steals
-  focus. It never changes colour; it opens. A 6px bar at rest, opening to hold
-  white level bars while listening and a spinner while transcribing. On GNOME,
-  hovering it opens it into a start/stop button, so a hands-free dictation can
-  be ended with the mouse.
+- **Always-on-top pill** — a small deep-green pill near the bottom centre of
+  the screen, above every window (including fullscreen ones), that never steals
+  focus. Five resting dots when idle; while you talk, level bars that follow
+  your voice and a tag for where the text will land (Email, Chat, Edit); a
+  brief "✓ Pasted" or "Too short" when it's done. On GNOME, hovering it opens
+  it into a start/stop button, so a hands-free dictation can be ended with the
+  mouse.
 - **A real app window** — six pages behind a sidebar: Home (a greeting, a
   quote, and what you've actually been doing — dictations, words, time saved,
   streak, time spoken, what the cleanup pass has cost you at OpenAI, and a
@@ -522,34 +523,37 @@ Two things to know before leaving `hold`:
 
 ### The pill
 
-One dark pill near the bottom centre of the screen, above every window
-(including fullscreen ones). It never changes colour and it is never a
-different object — it opens and closes, and everything happens inside it:
+One deep-green pill, the app's own colour, near the bottom centre of the
+screen and above every window (including fullscreen ones). It never changes
+colour and it is never a different object — it opens and closes, and
+everything happens inside it:
 
 | state | the pill |
 |---|---|
-| idle | a 68x6 bar, empty |
-| listening | opens to 52x16 to hold a row of white level bars |
-| transcribing | opens to hold a white spinner |
-| offline | the closed bar, receded, if the daemon isn't reachable |
+| idle | a 40x10 capsule holding five resting dots |
+| listening | a coral recording dot, level bars that follow your voice, and a tag: where the text will land (Email, Chat, Post, Doc, Code), or Edit / Notes |
+| transcribing | a spinner and the same tag |
+| finished | a word for 1.6 s: "✓ Pasted", "✓ Edited", "Too short", "Not pasted, see History"… |
+| offline | the closed capsule, receded, if the daemon isn't reachable |
 
 It's the fastest way to confirm the hotkey registered — no window to open, and
 it can't steal your keyboard focus, so the transcript still lands wherever you
 were typing.
 
-The bars aren't reading your microphone. The daemon records straight to a file
-and broadcasts no levels, so the meter says "capturing", not "capturing *this*
-loudly".
+The bars follow your microphone: the daemon samples the recording's loudness
+about 16 times a second and broadcasts it, so you can see at a glance whether
+it's hearing you. (Against an older daemon that sends no levels, they fall back
+to a canned animation.) The tag and the result word are GNOME-only; the
+`wlr-layer-shell` fallback keeps to the shapes and colours.
 
 **On GNOME, it's also a button.** Hover it and it opens the same way, this time
-onto a white ▶ when idle or ■ while recording — the mouse equivalent of the
+onto a ▶ when idle or ■ while recording — the mouse equivalent of the
 hotkey, and the natural way to stop a hands-free dictation. The background
-stays the same black throughout; nothing about the pill turns a different
-colour. Hovering while a transcript is being produced leaves the spinner alone,
+stays the same green throughout. Hovering while a transcript is being produced leaves the spinner alone,
 because a click then would only queue up and start a fresh recording the moment
 the text landed. Hovering is the only thing that takes pointer input away from
 the window underneath, so the target is kept to barely more than the pill
-itself — though it is deliberately taller than the 6px closed bar, which is far
+itself — though it is deliberately taller than the 10px closed capsule, which is far
 too thin to ask anyone to hit.
 
 The `wlr-layer-shell` fallback has no hover button — its window is created with
