@@ -40,7 +40,7 @@ export function prettyApp(app) {
   return base.charAt(0).toUpperCase() + base.slice(1)
 }
 
-export function computeStats(entries) {
+export function computeStats(entries, cleanupModel = 'gpt-4o-mini') {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
 
@@ -75,10 +75,15 @@ export function computeStats(entries) {
     if (entry.usage && typeof entry.usage.cost === 'number') {
       spend += entry.usage.cost
     } else if (entry.raw) {
-      const price = PRICING['gpt-4o-mini']
-      spend +=
-        (estimateTokens(entry.raw) * price[0] + estimateTokens(entry.text) * price[1]) /
-        1_000_000
+      // Same rule as _add_entry_cost in baatsun.py, so Home and Costs agree:
+      // estimate at the configured cleanup model's price, and a model with no
+      // price on file adds nothing rather than a guess.
+      const price = PRICING[cleanupModel]
+      if (price) {
+        spend +=
+          (estimateTokens(entry.raw) * price[0] + estimateTokens(entry.text) * price[1]) /
+          1_000_000
+      }
       spendEstimated = true
     }
 

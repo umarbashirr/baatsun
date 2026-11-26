@@ -53,7 +53,8 @@ except ValueError:
 import cairo  # noqa: E402
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
-SOCKET_PATH = f"/run/user/{os.getuid()}/baatsun.sock"
+SOCKET_PATH = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}", "baatsun.sock")
 
 # Closed: a bar, thin enough to read as an indicator and nothing else.
 REST_WIDTH = 68.0

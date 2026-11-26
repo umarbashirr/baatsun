@@ -29,6 +29,11 @@ STT_KEY_PATH = os.path.join(CONFIG_DIR, "elevenlabs.key")
 # on every utterance no matter how short. faster-whisper knows this name and
 # downloads it itself on first use (~250 MB).
 DEFAULT_MODEL = "small.en"
+# Used instead when "hinglish" is on. The .en models only know English, so a
+# Hindi or Urdu word arrives as a wrong English one ("hamare" as "Hummer") and
+# nothing downstream can recover what was said. The multilingual model of the
+# same size hears both, and with language pinned to English it writes English.
+DEFAULT_MULTILINGUAL_MODEL = "small"
 
 # Transcripts are cleaned up by OpenAI when the focused window looks like prose
 # (a browser on LinkedIn/X, a chat app) rather than a developer context. Only
@@ -95,7 +100,17 @@ DEFAULT_CONFIG = {
     # the Hinglish *transcription* this project used to ship: the audio is still
     # decoded as English, and the output is still English, not romanized Hindi.
     "cleanup_strength": "grammar",
+    # You mix Hindi/Urdu into your English. Switches transcription to the
+    # multilingual model (needs a daemon restart) and tells the cleanup pass to
+    # render those words in English. Output is always English.
     "hinglish": False,
+    # Beam search width for the local model. 1 is greedy: fastest, and the
+    # source of most misheard words. 5 is whisper's own default and the
+    # accuracy it was measured at. Settings offers 1/3/5.
+    "beam_size": 5,
+    # "paste": clipboard + Ctrl+V, instant at any length and any script.
+    # "type": ydotool key presses, slower but leaves the clipboard alone.
+    "insert_method": "paste",
     # Group long dictations into short paragraphs for readability. Only ever
     # applied where Enter starts a new line — never in a chat window, where it
     # would send the message in pieces.
@@ -108,6 +123,8 @@ COMPUTE_TYPE_CHOICES = ["int8", "int8_float16", "float16", "float32"]
 # these are the ones worth clicking. Ordered by size.
 MODEL_CHOICES = ["base.en", "distil-small.en", "medium.en", "distil-large-v3.5"]
 ACTIVATION_CHOICES = ["hold", "toggle", "hybrid"]
+BEAM_SIZE_CHOICES = [1, 3, 5]
+INSERT_METHOD_CHOICES = ["paste", "type"]
 # label -> (primary key group, secondary key group), resolved to evdev
 # keycodes by baatsun.py (which is the only side that has evdev installed).
 HOTKEY_CHOICES = ["ctrl+super", "ctrl+alt", "alt+super", "ctrl+shift"]
@@ -119,8 +136,19 @@ WHISPER_LANGUAGE = "en"
 
 
 def resolve_model(cfg):
-    """Return the model spec to load: the override if set, else DEFAULT_MODEL."""
-    return cfg.get("model_override") or DEFAULT_MODEL
+    """Return the model spec to load: the override if set, else the default
+    for the dictation language (English-only, or multilingual for Hinglish)."""
+    if cfg.get("model_override"):
+        return cfg["model_override"]
+    return DEFAULT_MULTILINGUAL_MODEL if cfg.get("hinglish") else DEFAULT_MODEL
+
+
+def resolve_beam_size(cfg):
+    try:
+        beam = int(cfg.get("beam_size") or 5)
+    except (TypeError, ValueError):
+        return 5
+    return max(1, min(beam, 10))
 
 
 def _load_key(path, env_var):
@@ -156,9 +184,15 @@ def _save_key(path, key):
             pass
         return
     tmp_path = path + ".tmp"
+    # A stale tmp file left by a crash keeps whatever mode it was created
+    # with, and O_CREAT does not change it — remove it so the 0600 below holds.
+    try:
+        os.remove(tmp_path)
+    except OSError:
+        pass
     # Create with 0600 from the outset rather than chmod-ing afterwards, which
     # would leave the key briefly world-readable.
-    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(key + "\n")
     os.replace(tmp_path, path)

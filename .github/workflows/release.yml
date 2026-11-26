@@ -14,6 +14,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # build-deb.sh needs electron/node_modules (vite to build the window,
+      # electron to ship it), and node_modules is not in git.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: electron/package-lock.json
+
+      - name: Install the window's build dependencies
+        working-directory: electron
+        run: npm ci
+
+      - name: Check the Python sources compile
+        run: python3 -m py_compile src/*.py
+
       - name: Build .deb
         run: |
           VERSION="${GITHUB_REF_NAME#v}" packaging/build-deb.sh

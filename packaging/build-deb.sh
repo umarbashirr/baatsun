@@ -13,10 +13,17 @@ VERSION="${1:-${VERSION:-}}"
 if [ -z "$VERSION" ]; then
     VERSION="$(cd "$REPO_ROOT" && git describe --tags --always 2>/dev/null | sed 's/^v//')"
 fi
-VERSION="${VERSION:-0.0.0-dev}"
+# Without tags, describe --always prints a bare commit hash, which dpkg rejects
+# because a version must start with a digit.
+case "$VERSION" in
+    [0-9]*) ;;
+    "") VERSION="0.0.0~dev" ;;
+    *) VERSION="0.0.0~git${VERSION}" ;;
+esac
 
 OUT_DIR="$REPO_ROOT/packaging/dist"
-PKG_NAME="baatsun_${VERSION}_all.deb"
+# amd64, not all: the package ships Electron's x86-64 binary.
+PKG_NAME="baatsun_${VERSION}_amd64.deb"
 
 echo "Building $PKG_NAME ..."
 
@@ -70,6 +77,7 @@ install -m 755 "$REPO_ROOT/bin/baatsun-toggle" "$STAGING/usr/bin/baatsun-toggle"
 install -m 755 "$REPO_ROOT/bin/baatsun-pill" "$STAGING/usr/bin/baatsun-pill"
 
 install -m 644 "$REPO_ROOT/packaging/debian/baatsun.service" "$STAGING/usr/lib/systemd/user/baatsun.service"
+install -m 644 "$REPO_ROOT/systemd/baatsun-ydotoold.service" "$STAGING/usr/lib/systemd/user/baatsun-ydotoold.service"
 install -m 644 "$REPO_ROOT/systemd/60-ydotool.rules" "$STAGING/usr/lib/udev/rules.d/60-ydotool.rules"
 # Absolute Exec so GNOME's launcher PATH (which often omits ~/.local/bin)
 # still finds the window. The checkout copy keeps the unqualified name.
@@ -78,10 +86,19 @@ sed -e 's|^Exec=baatsun-gui$|Exec=/usr/bin/baatsun-gui|' \
     > "$STAGING/usr/share/applications/baatsun-gui.desktop"
 chmod 644 "$STAGING/usr/share/applications/baatsun-gui.desktop"
 install -m 644 "$REPO_ROOT/autostart/baatsun-pill.desktop" "$STAGING/etc/xdg/autostart/baatsun-pill.desktop"
+# The tray icon is the always-available way into the app window; without it
+# the window could only be opened from the launcher or a terminal.
+install -m 644 "$REPO_ROOT/autostart/baatsun-tray.desktop" "$STAGING/etc/xdg/autostart/baatsun-tray.desktop"
 install -m 644 "$REPO_ROOT/packaging/debian/copyright" "$STAGING/usr/share/doc/baatsun/copyright"
 
 cp -r "$REPO_ROOT/gnome-extension/baatsun@umarbashirr.github.io" \
     "$STAGING/usr/share/gnome-shell/extensions/baatsun@umarbashirr.github.io"
+
+# A template, not a file under /etc/apparmor.d: postinst installs it only on
+# systems whose AppArmor understands it (see the file's header).
+mkdir -p "$STAGING/opt/baatsun/apparmor"
+install -m 644 "$REPO_ROOT/packaging/debian/apparmor-baatsun-electron" \
+    "$STAGING/opt/baatsun/apparmor/baatsun-electron"
 
 install -m 755 "$REPO_ROOT/packaging/debian/postinst" "$STAGING/DEBIAN/postinst"
 install -m 755 "$REPO_ROOT/packaging/debian/postrm" "$STAGING/DEBIAN/postrm"

@@ -103,10 +103,12 @@ export default function Costs({ daemon }) {
 
   // Refetch when a dictation lands, so the figure doesn't sit stale while the
   // page is open, and when the daemon comes back after a restart.
-  const count = daemon.entries.length
+  // Keyed on the newest entry's id rather than the count: once history is
+  // at its 500-entry cap the count stops changing while dictations continue.
+  const newest = daemon.entries.length ? daemon.entries[daemon.entries.length - 1].id : 0
   useEffect(() => {
     load()
-  }, [load, count, daemon.connected])
+  }, [load, newest, daemon.entries.length, daemon.connected])
 
   if (loading) {
     return <p className="text-[13px] text-ink-500">Totalling…</p>

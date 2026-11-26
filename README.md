@@ -3,8 +3,8 @@
 *बात + सुन — "talk" + "listen".*
 
 A voice dictation tool for Linux: **hold Ctrl+Super (Windows key) anywhere**,
-speak, **release** — it transcribes locally (faster-whisper, CPU) and types
-the text into whatever window or input box is focused (via `ydotool`).
+speak, **release** — it transcribes locally (faster-whisper, CPU) and pastes
+the text into whatever window or input box is focused.
 Transcription runs fully offline by default; nothing you say ever leaves your
 machine unless you opt in — to the OpenAI cleanup pass, which sends the
 transcript text only, or to the ElevenLabs transcription backend, which sends
@@ -26,7 +26,9 @@ the audio itself.
   dictation, costs roughly $0.27 per hour of speech, and sends your audio to
   ElevenLabs. Your vocabulary list is passed along as keyterms, so the names it
   gets right locally it gets right there too.
-- **Works anywhere** — types directly into whatever window has focus, so it
+- **Works anywhere** — pastes directly into whatever window has focus
+  (clipboard + Ctrl+V, Ctrl+Shift+V in terminals, with your previous clipboard
+  restored), or types key by key if you prefer, so it
   works in any app, not just ones with dictation support built in.
 - **No shortcut registration needed** — reads the keyboard directly below the
   compositor, so it works the same way on any desktop environment.
@@ -47,7 +49,12 @@ the audio itself.
   and Settings. Plus a tray icon for live state at a glance.
 - **Accurate English** — whisper `small.en`, int8 on CPU: the smallest model
   that gets every word right and punctuates properly, at ~1.6s per dictation.
-- **Optional cleanup pass** — tidies punctuation and filler words via OpenAI
+- **English or English + Hinglish** — pick in Settings. Hinglish switches to
+  the multilingual model so Hindi/Urdu words are heard rather than guessed;
+  the output is English either way.
+- **Optional cleanup pass** — a proofreader, not a rewriter: fixes punctuation,
+  filler words, stutters and your own spoken corrections ("3, no, 4" → "4"),
+  and keeps your wording, via OpenAI
   `gpt-4o-mini`, but only when the focused window is prose (LinkedIn, X, Slack).
   Terminals and editors are always typed verbatim. Your audio never leaves the
   machine; only the transcript text is sent, and only if you enable it.
@@ -93,7 +100,7 @@ src/baatsun.py (background daemon, systemd --user service)
    ├─ reads /dev/input/eventN directly (evdev) for every keyboard device
    │      Ctrl+Super pressed  → pw-record starts capturing audio
    │      Ctrl+Super released → stop capture → faster-whisper transcribe
-   │                            → ydotool type → append to transcript history
+   │                            → paste (or ydotool type) → append to transcript history
    │
    └─ unix socket at /run/user/$UID/baatsun.sock, multiple commands:
         toggle     — start/stop recording, sent by bin/baatsun-toggle and
@@ -293,7 +300,7 @@ the recommended path for normal use.
 git clone https://github.com/umarbashirr/baatsun.git
 cd baatsun
 
-sudo apt install -y python3-venv python3-pip python3-dev ydotool
+sudo apt install -y python3-venv python3-pip python3-dev ydotool wl-clipboard
 
 python3 -m venv venv
 venv/bin/pip install -r packaging/requirements.txt
@@ -303,14 +310,20 @@ ln -sf "$(pwd)"/bin/baatsun-{gui,tray,toggle,pill} ~/.local/bin/
 ```
 
 The `ln -sf` step puts `baatsun-gui`/`baatsun-tray`/`baatsun-toggle`/
-`baatsun-pill` on your `PATH` (assuming `~/.local/bin` is on it, the default
-on Ubuntu/GNOME) so the desktop entries in steps 5 and 6 below can find them.
+`baatsun-pill` on your `PATH` for use from a terminal. The launcher and
+autostart entries don't rely on it — `install-local.sh` (step 3) writes them
+with absolute paths, because GNOME's launcher often runs without
+`~/.local/bin` on `PATH`, and an entry that relies on it does nothing when
+clicked. (`wl-clipboard` is what lets transcripts be pasted rather than typed
+key by key; on X11 install `xclip` instead.)
 
 #### 2. Let ydotool write to /dev/uinput without root
 
-This build of `ydotool` talks to `/dev/uinput` directly — there's no
-`ydotoold` daemon involved, so the device needs to be group-writable instead
-of running everything as root.
+`ydotool` needs to write to `/dev/uinput`. Make the device group-writable
+rather than running anything as root. ydotool 0.1.x (Ubuntu 22.04) talks to
+the device directly; ydotool 1.x (Ubuntu 24.04+, Debian 13+) goes through a
+`ydotoold` daemon, which `install-local.sh` sets up as the
+`baatsun-ydotoold` user service — `baatsun.service` starts it for you.
 
 ```bash
 sudo cp systemd/60-ydotool.rules /etc/udev/rules.d/60-ydotool.rules
@@ -326,17 +339,20 @@ Verify after re-login:
 
 ```bash
 groups   # should list "input"
+systemctl --user start baatsun-ydotoold   # ydotool 1.x only; harmless on 0.1.x
 ydotool type "hello"   # click into any text field first
 ```
 
 #### 3. Install and enable the daemon as a systemd user service
 
 ```bash
-mkdir -p ~/.config/systemd/user
-cp systemd/baatsun.service ~/.config/systemd/user/
-systemctl --user daemon-reload
+./install-local.sh
 systemctl --user enable --now baatsun.service
 ```
+
+`install-local.sh` writes the service units, the app-launcher entry and the
+login autostart entries for the pill and tray, all pointing at this clone by
+absolute path. Re-run it if you move the clone.
 
 Check it's alive and see the model load log:
 
@@ -399,28 +415,17 @@ For the pill:
 - **On GNOME/Xorg or a plain X11 window manager**, there's no supported way
   to host the pill — skip it and use the tray icon/window instead.
 
-#### 5. (Optional) autostart the pill and/or tray icon on login
+#### 5. Opening the app window
 
-```bash
-mkdir -p ~/.config/autostart
-cp autostart/baatsun-pill.desktop ~/.config/autostart/
-cp autostart/baatsun-tray.desktop ~/.config/autostart/   # optional, tray icon
-```
+Step 3 already added **Baatsun** to your app launcher and set the pill and
+tray icon to start on login. Three ways in, none needing a terminal:
 
-`baatsun-pill` at login detects GNOME automatically and enables the Shell
-extension instead of opening a window there. Without this entry, bring up
-the pill manually with `baatsun-pill`, or the tray/window with
-`baatsun-tray`/`baatsun-gui`.
+- search **Baatsun** in the app launcher;
+- the tray icon's **Open Baatsun**;
+- **right-click the pill** (GNOME).
 
-#### 6. (Optional) add "Baatsun" to your app launcher
-
-```bash
-mkdir -p ~/.local/share/applications
-cp desktop/baatsun-gui.desktop ~/.local/share/applications/
-```
-
-Makes `baatsun-gui` launchable from your app launcher like a normal installed
-app, in addition to the tray icon and running it from a terminal.
+If the window can't start (not built yet, Electron missing), you get a
+desktop notification saying why, instead of nothing happening.
 
 ## Usage
 
@@ -428,7 +433,7 @@ app, in addition to the tray icon and running it from a terminal.
 2. Hold **Ctrl+Super** → recording starts (tray icon glyph switches to a
    record dot, and the GUI header shows "Listening…", if either is open).
 3. Speak, while still holding both keys.
-4. Release either key → "Transcribing…" then the text is typed in and
+4. Release either key → "Transcribing…" then the text is pasted in and
    appended to the history window.
 
 `baatsun-toggle` also exists as a manual/scriptable alternative (sends a
@@ -525,7 +530,7 @@ Inside the window:
   alternative to holding Ctrl+Super — and the header subtitle shows
   "Listening…"/"Transcribing…" live.
 - The search box filters history as you type.
-- Each transcript row has copy / retype (re-runs `ydotool type` into
+- Each transcript row has copy / insert-again (re-pastes into
   whatever's currently focused) / delete buttons.
 - The gear icon opens **Settings** — the hotkey combo (Ctrl+Super / Ctrl+Alt /
   Alt+Super / Ctrl+Shift). Applying restarts the daemon
@@ -615,9 +620,12 @@ deleted.
 
 Off by default. When enabled, a transcript is passed through OpenAI
 `gpt-4o-mini` before being typed, to fix punctuation, capitalisation and filler
-words ("um", "you know") and to break run-on speech into sentences. It's told to
-preserve your wording and to leave technical terms, identifiers and file paths
-exactly as dictated.
+words ("um", "you know"), stutters, obvious mishearings and your own spoken
+self-corrections ("Tuesday, sorry, Wednesday" → "Wednesday"). It is told not to
+paraphrase, reorder, merge, shorten or polish — your words, in your order — and
+to leave technical terms, identifiers and file paths exactly as dictated.
+**Correction level** "Proofread + light grammar" additionally allows the
+smallest grammatical fixes; neither level rephrases.
 
 **Only the transcript text is sent. The audio never leaves your machine** —
 that's the point of transcribing locally and only polishing remotely.
@@ -693,7 +701,10 @@ day. Transcription itself is free — it runs on your CPU.
 
 Baatsun runs entirely offline by default — audio never leaves your machine, and
 nothing is logged beyond the transcript history you can see and clear yourself
-in the app window.
+in the app window (stored 0600 in `~/.local/share/baatsun`). The daemon's
+journal records word counts, not what you said; set
+`Environment=BAATSUN_LOG_TRANSCRIPTS=1` on the service if you want transcripts
+in `journalctl` for debugging.
 
 There are two exceptions, both opt-in and both off unless you turn them on:
 
@@ -748,11 +759,24 @@ before trusting it with anything sensitive.
   a 5–10 minute brainstorm. Current builds send 20s slices *while you talk*;
   after you stop you only wait on the leftover tail plus ChatGPT cleanup.
   Watch `journalctl --user -u baatsun.service -f` for `elevenlabs chunk N sent`.
-- **Transcription is slower than you'd like** — set `model_override` to
-  `base.en` (see [Configuration](#configuration)); it's about 2x quicker than
-  `small.en` but does substitute words. On ElevenLabs, slowness after a long
-  talk is usually ChatGPT cleanup (scales with word count) or `ydotool`
-  typing ~12ms per character, not Scribe itself.
+- **Transcription is slower than you'd like** — first check **Insert text by**
+  is *Paste* (typing key by key is slow on long text). Then set **Accuracy** to
+  *Balanced* or *Fastest*, or `model_override` to `base.en` (see
+  [Configuration](#configuration)); it's about 2x quicker than `small.en` but
+  does substitute words. With cleanup on, its OpenAI round trip adds a second
+  or so per dictation.
+- **Text never appears, log says `could not insert the transcript`** — with
+  ydotool 1.x, `ydotoold` must be running:
+  `systemctl --user enable --now baatsun-ydotoold`. For pasting, install
+  `wl-clipboard` (Wayland) or `xclip` (X11). The text is always kept in History.
+- **The window runs without Chromium's sandbox** — `baatsun-gui` tries the
+  sandbox first and falls back if Chromium can't start it (Ubuntu 24.04+ blocks
+  the user namespaces it needs unless an AppArmor profile allows them; the
+  `.deb` installs one, `/etc/apparmor.d/baatsun-electron`). The verdict is
+  cached in `~/.cache/baatsun/sandbox-unavailable`; delete that file to retry.
+- **The app window doesn't open from the launcher** — on a source install, run
+  `./install-local.sh` again: it rewrites the launcher entry with an absolute
+  path. A failed start now shows a desktop notification with the reason.
 - **Nothing happens on a fresh install** — the first run downloads the ~250 MB
   model and the hotkey stays unresponsive until it lands. Check
   `journalctl --user -u baatsun.service -f`; you should see `model loaded` once
@@ -779,17 +803,12 @@ before trusting it with anything sensitive.
   (`baatsun_config.HOTKEY_CHOICES`) rather than an arbitrary key — capturing
   an arbitrary combo would need a "press your new hotkey" flow in the app
   window that doesn't exist yet.
-- English only. The default model is an English-only distillation and there's no
-  language setting; another language means pointing `model_override` at a
-  multilingual model and changing `WHISPER_LANGUAGE` in
-  `src/baatsun_config.py`.
+- Output is English only. Settings offers English and English + Hinglish; any
+  other spoken language means pointing `model_override` at a multilingual model
+  and changing `WHISPER_LANGUAGE` in `src/baatsun_config.py`.
 - Accuracy is bought with CPU. `small.en` is ~2.4x slower per dictation than
   the whisper-base-sized model this used to ship — `model_override` is the way
   back down if that matters more than word accuracy.
-- Any language that writes in a non-Latin script (Hindi in Devanagari, say)
-  needs more than a different model: `ydotool type` can only produce US-layout
-  keycodes, so the typing path in `stop_recording_and_transcribe()` would have
-  to be replaced with a clipboard-and-paste approach first.
 
 ## Contributing
 

@@ -1,9 +1,13 @@
 [Unit]
 Description=Voice dictation daemon (baatsun)
-After=default.target sound.target
+After=default.target sound.target baatsun-ydotoold.service
+# ydotool 1.x types and pastes through ydotoold; skipped on 0.1.x.
+Wants=baatsun-ydotoold.service
 
 [Service]
-ExecStart=%h/projects/baatsun/venv/bin/python3 %h/projects/baatsun/src/baatsun.py
+# @CHECKOUT@ is replaced with the absolute path of your clone when you install
+# this unit as the README describes (sed). Installed verbatim it will not start.
+ExecStart=@CHECKOUT@/venv/bin/python3 @CHECKOUT@/src/baatsun.py
 # Settings come from ~/.config/baatsun/config.json (the hotkey is editable via
 # the Settings panel in baatsun-gui; model_override and compute_type are file
 # only). Uncomment to force a value regardless of that file — an env var always
@@ -12,6 +16,9 @@ ExecStart=%h/projects/baatsun/venv/bin/python3 %h/projects/baatsun/src/baatsun.p
 # Environment=BAATSUN_MODEL=medium.en
 Restart=on-failure
 RestartSec=2
+# Shutdown waits up to 120s for a dictation in flight to finish typing
+# (FINISH_JOIN_SECONDS); the 90s default would SIGKILL it first.
+TimeoutStopSec=150
 
 [Install]
 WantedBy=default.target

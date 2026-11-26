@@ -34,6 +34,8 @@ const DEFAULTS = {
   vocabulary: '',
   cleanup_strength: 'grammar',
   hinglish: false,
+  beam_size: 5,
+  insert_method: 'paste',
   line_breaks: true,
 }
 
@@ -46,9 +48,13 @@ const CHOICES = {
   cleanup_scope: ['prose', 'all'],
   cleanup_strength: ['grammar', 'natural'],
   cleanup_model: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano'],
+  beam_size: [1, 3, 5],
+  insert_method: ['paste', 'type'],
 }
 
 const DEFAULT_MODEL = 'small.en'
+// DEFAULT_MULTILINGUAL_MODEL in baatsun_config.py: used when hinglish is on.
+const DEFAULT_MULTILINGUAL_MODEL = 'small'
 
 function loadConfig() {
   const cfg = { ...DEFAULTS }
@@ -90,6 +96,17 @@ function loadKey(keyPath, envVar) {
   }
 }
 
+/**
+ * What the renderer is allowed to know about a key: whether one is set, where
+ * it comes from, and its last four characters. Never the key itself — the
+ * renderer only ever writes keys, it has no reason to read them back.
+ */
+function keyStatus(keyPath, envVar) {
+  const fromEnv = !!(process.env[envVar] || '').trim()
+  const key = loadKey(keyPath, envVar)
+  return { set: !!key, fromEnv, hint: key ? key.slice(-4) : '' }
+}
+
 function saveKey(keyPath, value) {
   fs.mkdirSync(CONFIG_DIR, { recursive: true })
   const key = (value || '').trim()
@@ -102,9 +119,15 @@ function saveKey(keyPath, value) {
     return
   }
   const tmp = `${keyPath}.tmp`
-  // 0600 from the outset rather than chmod afterwards, which would leave the
-  // key briefly world-readable — the same reasoning as save_api_key in Python.
-  fs.writeFileSync(tmp, `${key}\n`, { mode: 0o600 })
+  // A stale tmp file keeps its old mode (the mode option only applies on
+  // create), so remove it first; then 0600 from the outset rather than chmod
+  // afterwards, which would leave the key briefly world-readable.
+  try {
+    fs.unlinkSync(tmp)
+  } catch {
+    /* none left over */
+  }
+  fs.writeFileSync(tmp, `${key}\n`, { mode: 0o600, flag: 'wx' })
   fs.renameSync(tmp, keyPath)
 }
 
@@ -124,9 +147,12 @@ module.exports = {
   DEFAULTS,
   CHOICES,
   DEFAULT_MODEL,
+  DEFAULT_MULTILINGUAL_MODEL,
   loadConfig,
   saveConfig,
   loadHistoryFromDisk,
+  openaiKeyStatus: () => keyStatus(OPENAI_KEY_PATH, 'OPENAI_API_KEY'),
+  sttKeyStatus: () => keyStatus(STT_KEY_PATH, 'ELEVENLABS_API_KEY'),
   loadOpenaiKey: () => loadKey(OPENAI_KEY_PATH, 'OPENAI_API_KEY'),
   saveOpenaiKey: (v) => saveKey(OPENAI_KEY_PATH, v),
   loadSttKey: () => loadKey(STT_KEY_PATH, 'ELEVENLABS_API_KEY'),

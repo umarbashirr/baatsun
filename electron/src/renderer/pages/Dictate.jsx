@@ -17,6 +17,14 @@ const REASONS = {
   too_short: 'That one was too short to transcribe.',
   empty: 'Nothing recognisable in that recording.',
   failed: 'Transcription failed — the recording was kept on disk.',
+  insert_failed: 'Could not paste into the window — the text is in History. Is ydotoold running?',
+  mic_failed: 'Could not open the microphone — is PipeWire (pw-record) installed?',
+}
+
+// Replies to "toggle" that mean nothing happened.
+const TOGGLE_ERRORS = {
+  busy: 'Still finishing the last dictation — try again in a moment.',
+  mic_failed: REASONS.mic_failed,
 }
 
 // The surface names baatsun_context.surface() returns, in the words a person
@@ -37,7 +45,7 @@ const SURFACES = {
  * that changes colour to mean something new. Rings expand while recording so
  * the state is legible from across a desk.
  */
-function Orb({ state, onToggle }) {
+function Orb({ state, onToggle, disabled }) {
   const recording = state === 'listening'
   const transcribing = state === 'transcribing'
 
@@ -45,7 +53,7 @@ function Orb({ state, onToggle }) {
     <button
       type="button"
       onClick={onToggle}
-      disabled={transcribing}
+      disabled={transcribing || disabled}
       aria-label={recording ? 'Stop recording' : 'Start recording'}
       className="no-drag group relative grid h-[132px] w-[132px] place-items-center disabled:cursor-wait"
     >
@@ -113,20 +121,36 @@ export default function Dictate({ daemon }) {
   }, [daemon.state])
 
   const toggle = async () => {
+    if (busy) return
     setBusy(true)
     setError('')
     try {
-      await daemon.toggle()
+      const reply = await daemon.toggle()
+      if (reply !== 'started' && reply !== 'stopped') {
+        // No state change follows a refused toggle, so nothing else would
+        // re-enable the button.
+        setError(TOGGLE_ERRORS[reply] || `The daemon replied “${reply}”.`)
+        setBusy(false)
+      }
     } catch (err) {
       setError(err.message)
       setBusy(false)
     }
   }
 
+  const retype = async () => {
+    setError('')
+    try {
+      await daemon.retype(latest.id)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   return (
     <div className="mx-auto max-w-[720px]">
       <div className="flex flex-col items-center py-6">
-        <Orb state={current} onToggle={toggle} />
+        <Orb state={current} onToggle={toggle} disabled={busy || !daemon.connected} />
 
         <h2 className="mt-6 text-[19px] font-semibold tracking-tight text-ink-50">
           {copy.title}
@@ -185,8 +209,8 @@ export default function Dictate({ daemon }) {
         <Section
           title="Last transcript"
           action={
-            <Button size="sm" variant="ghost" onClick={() => daemon.retype(latest.id)}>
-              Type it again
+            <Button size="sm" variant="ghost" onClick={retype}>
+              Insert it again
             </Button>
           }
         >

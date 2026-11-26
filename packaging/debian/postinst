@@ -8,6 +8,17 @@ REQUIREMENTS=/opt/baatsun/requirements.txt
 
 case "$1" in
     configure)
+        # Rebuild after a Python minor upgrade (3.12 -> 3.13): the venv's
+        # python3 symlink still resolves, but it now looks in a site-packages
+        # directory that is empty, and the daemon dies on "No module evdev".
+        SYS_PY="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+        if [ -x "$VENV/bin/python3" ]; then
+            VENV_PY="$("$VENV/bin/python3" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
+            if [ "$VENV_PY" != "$SYS_PY" ]; then
+                echo "baatsun: Python changed (${VENV_PY:-unknown} -> $SYS_PY); rebuilding the virtualenv ..."
+                rm -rf "$VENV"
+            fi
+        fi
         if [ ! -x "$VENV/bin/python3" ]; then
             echo "baatsun: creating virtualenv at $VENV ..."
             python3 -m venv "$VENV"
@@ -30,7 +41,22 @@ case "$1" in
         # is a package Depends for that). Keep pip's output visible: the
         # wheels are large, and --quiet made a missing Python.h look like apt
         # had hung and then failed with no cause.
-        if ! "$VENV/bin/pip" install --require-virtualenv -r "$REQUIREMENTS"; then
+        #
+        # --no-build-isolation: otherwise pip fetches the *latest* setuptools
+        # from PyPI into a throwaway build env to compile evdev, and runs it as
+        # root — the unpinned exposure requirements.txt exists to remove. The
+        # pinned setuptools goes in first and builds it instead.
+        #
+        # --require-hashes: every downloaded file must match a sha256 in
+        # requirements.txt, so the bytes are pinned, not just the version.
+        # --hash only works inside a requirements file, hence the extract.
+        BUILD_REQS="$(mktemp)"
+        awk '/^setuptools==/{p=1} p{print; if ($0 !~ /\\$/) exit}' "$REQUIREMENTS" > "$BUILD_REQS"
+        if [ -s "$BUILD_REQS" ]; then
+            "$VENV/bin/pip" install --require-virtualenv --require-hashes -r "$BUILD_REQS"
+        fi
+        rm -f "$BUILD_REQS"
+        if ! "$VENV/bin/pip" install --require-virtualenv --require-hashes --no-build-isolation -r "$REQUIREMENTS"; then
             echo "baatsun: failed to install Python dependencies into $VENV." >&2
             echo "         evdev has to be compiled; install python3-dev and retry:" >&2
             echo "           sudo apt install -y python3-dev && sudo dpkg --configure -a" >&2
@@ -39,14 +65,25 @@ case "$1" in
 
         chmod -R a+rX /opt/baatsun
 
-        # Chromium refuses to start unsandboxed unless told to, and its setuid
-        # helper only works owned by root with the setuid bit set. Doing it here
-        # is what lets baatsun-gui run the window *with* its sandbox; without
-        # this the launcher falls back to --no-sandbox.
+        # The window's sandbox uses unprivileged user namespaces, not the
+        # setuid helper, so chrome-sandbox must NOT be setuid root (older
+        # releases set it; undo). On Ubuntu 24.04+ AppArmor blocks those
+        # namespaces unless a profile allows them — install ours where the
+        # AppArmor ABI it is written for exists. If anything here fails, the
+        # launcher falls back to --no-sandbox, so the window still opens.
         SANDBOX=/opt/baatsun/electron/node_modules/electron/dist/chrome-sandbox
         if [ -f "$SANDBOX" ]; then
-            chown root:root "$SANDBOX"
-            chmod 4755 "$SANDBOX"
+            chmod 0755 "$SANDBOX"
+        fi
+        PROFILE_SRC=/opt/baatsun/apparmor/baatsun-electron
+        PROFILE=/etc/apparmor.d/baatsun-electron
+        if [ -f "$PROFILE_SRC" ] && [ -e /etc/apparmor.d/abi/4.0 ] \
+                && command -v apparmor_parser >/dev/null 2>&1; then
+            cp "$PROFILE_SRC" "$PROFILE"
+            if ! apparmor_parser -r -T -W "$PROFILE" >/dev/null 2>&1; then
+                echo "baatsun: could not load the AppArmor profile; the window will run unsandboxed." >&2
+                rm -f "$PROFILE"
+            fi
         fi
 
         udevadm control --reload-rules >/dev/null 2>&1 || true
@@ -84,6 +121,9 @@ case "$1" in
             STEP=$((STEP + 1))
         fi
         echo "  $STEP. Run: systemctl --user enable --now baatsun"
+        STEP=$((STEP + 1))
+        echo "  $STEP. Open the app from your launcher (search 'Baatsun'), the tray icon,"
+        echo "     or right-click the pill. Dictation itself needs no window open."
         echo ""
         echo "The pill (the bottom-centre recording indicator) autostarts on next"
         echo "login; run 'baatsun-pill' now to bring it up immediately. On GNOME"

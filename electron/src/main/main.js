@@ -70,16 +70,23 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      // On, not off. A sandboxed preload can still require('electron') for
-      // contextBridge and ipcRenderer, which is all preload.js uses — the
-      // Node work (sockets, files, https) all happens in this process. Leaving
-      // it off would buy nothing and cost the renderer's OS-level isolation,
-      // which matters because that process holds the API keys.
+      // On, so the renderer gets Electron's sandboxed preload model (no Node
+      // in the page, only the contextBridge methods) and, where the launcher
+      // could start Chromium's OS sandbox, real process isolation too. Where
+      // it couldn't, bin/baatsun-gui falls back to --no-sandbox — which is
+      // why API keys never reach the renderer at all (config:load).
       sandbox: true,
     },
   })
 
-  mainWindow.once('ready-to-show', () => mainWindow.show())
+  // Shown on ready-to-show to avoid a flash, with a fallback: if the renderer
+  // stalls (a GPU or compositor problem), ready-to-show never fires and the
+  // app runs with no visible window at all.
+  const reveal = () => {
+    if (mainWindow && !mainWindow.isVisible()) mainWindow.show()
+  }
+  mainWindow.once('ready-to-show', reveal)
+  setTimeout(reveal, 3000)
 
   if (isDev) {
     mainWindow.loadURL(DEV_SERVER)
@@ -168,19 +175,25 @@ handle('daemon:clear', () => daemon.clear())
 handle('daemon:delete', (id) => daemon.remove(id))
 handle('daemon:retype', (id) => daemon.retype(id))
 
+// Keys never cross into the renderer: it gets whether each is set (and its
+// last four characters), and can only write a new one. Home and Words call
+// this too, and they have no business holding an API key.
 handle('config:load', () => ({
   config: store.loadConfig(),
   choices: store.CHOICES,
   defaultModel: store.DEFAULT_MODEL,
-  openaiKey: store.loadOpenaiKey(),
-  sttKey: store.loadSttKey(),
+  multilingualModel: store.DEFAULT_MULTILINGUAL_MODEL,
+  keys: { openai: store.openaiKeyStatus(), elevenlabs: store.sttKeyStatus() },
   configPath: store.CONFIG_PATH,
 }))
 
+// A key is only written when the user actually edited it (a string; '' means
+// remove it). undefined leaves it alone — which is also what stops a key that
+// only lives in an environment variable from being copied onto disk.
 handle('config:save', ({ config, openaiKey, sttKey }) => {
   const saved = store.saveConfig(config)
-  if (openaiKey !== undefined) store.saveOpenaiKey(openaiKey)
-  if (sttKey !== undefined) store.saveSttKey(sttKey)
+  if (typeof openaiKey === 'string') store.saveOpenaiKey(openaiKey)
+  if (typeof sttKey === 'string') store.saveSttKey(sttKey)
   return saved
 })
 
@@ -190,9 +203,12 @@ handle('history:disk', () => store.loadHistoryFromDisk())
 
 // Tests the key in the box, not the one on disk, so it can be checked before
 // saving — pressing Test on a key you haven't committed to is the whole point.
-handle('key:verify', ({ provider, key }) =>
-  provider === 'elevenlabs' ? keycheck.verifyElevenlabs(key) : keycheck.verifyOpenai(key),
-)
+// An empty box tests the key already saved, so it can be checked without
+// the renderer ever having it.
+handle('key:verify', ({ provider, key }) => {
+  if (provider === 'elevenlabs') return keycheck.verifyElevenlabs(key || store.loadSttKey())
+  return keycheck.verifyOpenai(key || store.loadOpenaiKey())
+})
 
 handle('daemon:restart', () =>
   new Promise((resolve, reject) => {

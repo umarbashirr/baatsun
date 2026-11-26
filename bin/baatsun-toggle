@@ -4,7 +4,8 @@ import os
 import socket
 import sys
 
-SOCKET_PATH = f"/run/user/{os.getuid()}/baatsun.sock"
+SOCKET_PATH = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}", "baatsun.sock")
 
 
 def main():
