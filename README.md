@@ -27,7 +27,7 @@ the audio itself.
 curl -fsSL https://raw.githubusercontent.com/umarbashirr/baatsun/main/install.sh | bash
 ```
 
-![The Baatsun app window: Home page with dictation stats and a 14-day activity chart](docs/assets/home.png)
+![The Baatsun app window: Home page with dictation stats and a 14-day activity chart](docs/assets/home-v15.png)
 
 ## Features
 
