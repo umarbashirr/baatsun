@@ -6,6 +6,10 @@ set -e
 
 case "$1" in
     remove|purge)
+        if [ -f /etc/apparmor.d/baatsun-electron ]; then
+            apparmor_parser -R /etc/apparmor.d/baatsun-electron >/dev/null 2>&1 || true
+            rm -f /etc/apparmor.d/baatsun-electron
+        fi
         rm -rf /opt/baatsun
         # dpkg cannot stop per-user services. Say what is left behind.
         echo "baatsun: removed. Each user who enabled it should also run:"

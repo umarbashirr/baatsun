@@ -7,6 +7,7 @@ audio via pw-record; second toggle stops it, transcribes with a local
 faster-whisper model, and types the result into the focused window via
 ydotool.
 """
+import array
 import json
 import os
 import signal
@@ -374,6 +375,11 @@ def log(msg):
 
 
 BYTES_PER_SECOND = int(SAMPLE_RATE) * 2
+# Live ElevenLabs slicing: look this far before and after each 20s boundary
+# for a pause to cut at, in frames of SLICE_FRAME seconds.
+SLICE_SEARCH_BACK = 4.0
+SLICE_LOOKAHEAD = 2.0
+SLICE_FRAME = 0.1
 
 
 def _wav_pcm_offset(path):
@@ -506,6 +512,11 @@ class LiveScribe:
 
     def _drain(self, final):
         chunk = baatsun_stt.CHUNK_SECONDS * BYTES_PER_SECOND
+        # Cut in the quietest moment near the nominal boundary rather than at
+        # exactly CHUNK_SECONDS: a hard cut lands mid-word as often as not,
+        # and both slices then mangle or drop that word. Waiting for
+        # SLICE_LOOKAHEAD past the boundary gives the search room either side.
+        lookahead = int(SLICE_LOOKAHEAD * BYTES_PER_SECOND)
         to_send = []
         with self.lock:
             try:
@@ -513,15 +524,45 @@ class LiveScribe:
             except OSError:
                 return
             available = size - self.offset
-            while available >= chunk:
-                to_send.append((self.offset, chunk))
-                self.offset += chunk
+            while available >= chunk + lookahead:
+                length = self._quiet_cut(self.offset, chunk, lookahead)
+                to_send.append((self.offset, length))
+                self.offset += length
                 available = size - self.offset
             if final and available >= 1024:
                 to_send.append((self.offset, available))
                 self.offset += available
         for offset, length in to_send:
             self._emit(offset, length)
+
+    def _quiet_cut(self, offset, chunk, lookahead):
+        """Slice length ending at the quietest frame in [chunk - back, chunk + ahead].
+
+        Falls back to the nominal length if the audio can't be read. Always
+        a whole number of samples, so the next slice starts on a sample.
+        """
+        back = int(SLICE_SEARCH_BACK * BYTES_PER_SECOND)
+        start = offset + chunk - back
+        try:
+            with open(self.path, "rb") as handle:
+                handle.seek(start)
+                window = handle.read(back + lookahead)
+        except OSError:
+            return chunk
+        frame = int(SLICE_FRAME * BYTES_PER_SECOND) & ~1
+        best_at, best_energy = None, None
+        for at in range(0, len(window) - frame + 1, frame):
+            samples = array.array("h")
+            samples.frombytes(window[at:at + frame])
+            if sys.byteorder == "big":
+                samples.byteswap()
+            energy = sum(abs(v) for v in samples)
+            if best_energy is None or energy < best_energy:
+                best_at, best_energy = at, energy
+        if best_at is None:
+            return chunk
+        # Cut in the middle of the quiet frame.
+        return (chunk - back + best_at + frame // 2) & ~1
 
     def _emit(self, offset, length):
         try:

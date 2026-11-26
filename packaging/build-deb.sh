@@ -94,6 +94,12 @@ install -m 644 "$REPO_ROOT/packaging/debian/copyright" "$STAGING/usr/share/doc/b
 cp -r "$REPO_ROOT/gnome-extension/baatsun@umarbashirr.github.io" \
     "$STAGING/usr/share/gnome-shell/extensions/baatsun@umarbashirr.github.io"
 
+# A template, not a file under /etc/apparmor.d: postinst installs it only on
+# systems whose AppArmor understands it (see the file's header).
+mkdir -p "$STAGING/opt/baatsun/apparmor"
+install -m 644 "$REPO_ROOT/packaging/debian/apparmor-baatsun-electron" \
+    "$STAGING/opt/baatsun/apparmor/baatsun-electron"
+
 install -m 755 "$REPO_ROOT/packaging/debian/postinst" "$STAGING/DEBIAN/postinst"
 install -m 755 "$REPO_ROOT/packaging/debian/postrm" "$STAGING/DEBIAN/postrm"
 

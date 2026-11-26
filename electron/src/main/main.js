@@ -71,10 +71,10 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       // On, so the renderer gets Electron's sandboxed preload model (no Node
-      // in the page, only the contextBridge methods). Note that the launcher
-      // passes --no-sandbox, which disables Chromium's *OS-level* sandbox —
-      // see bin/baatsun-gui for why — so this is not process isolation. That
-      // is why API keys never reach the renderer at all (config:load).
+      // in the page, only the contextBridge methods) and, where the launcher
+      // could start Chromium's OS sandbox, real process isolation too. Where
+      // it couldn't, bin/baatsun-gui falls back to --no-sandbox — which is
+      // why API keys never reach the renderer at all (config:load).
       sandbox: true,
     },
   })

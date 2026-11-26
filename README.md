@@ -769,6 +769,11 @@ before trusting it with anything sensitive.
   ydotool 1.x, `ydotoold` must be running:
   `systemctl --user enable --now baatsun-ydotoold`. For pasting, install
   `wl-clipboard` (Wayland) or `xclip` (X11). The text is always kept in History.
+- **The window runs without Chromium's sandbox** — `baatsun-gui` tries the
+  sandbox first and falls back if Chromium can't start it (Ubuntu 24.04+ blocks
+  the user namespaces it needs unless an AppArmor profile allows them; the
+  `.deb` installs one, `/etc/apparmor.d/baatsun-electron`). The verdict is
+  cached in `~/.cache/baatsun/sandbox-unavailable`; delete that file to retry.
 - **The app window doesn't open from the launcher** — on a source install, run
   `./install-local.sh` again: it rewrites the launcher entry with an absolute
   path. A failed start now shows a desktop notification with the reason.

@@ -56,6 +56,45 @@ def fail(message):
     return 1
 
 
+SANDBOX_PROBE_SECONDS = 6
+SANDBOX_MARKER = os.path.join(
+    os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
+    "baatsun", "sandbox-unavailable")
+
+
+def _electron_id(electron):
+    """Which Electron build a sandbox verdict applies to."""
+    real = os.path.realpath(electron)
+    try:
+        return f"{real} {int(os.stat(real).st_mtime)}"
+    except OSError:
+        return real
+
+
+def sandbox_known_broken(electron):
+    try:
+        with open(SANDBOX_MARKER) as f:
+            return f.read().strip() == _electron_id(electron)
+    except OSError:
+        return False
+
+
+def remember_sandbox_broken(electron):
+    # Keyed by binary and mtime, so an upgrade (or a newly installed AppArmor
+    # profile, via `rm ~/.cache/baatsun/sandbox-unavailable`) tries again.
+    try:
+        os.makedirs(os.path.dirname(SANDBOX_MARKER), exist_ok=True)
+        with open(SANDBOX_MARKER, "w") as f:
+            f.write(_electron_id(electron) + "\n")
+    except OSError:
+        pass
+
+
+def unsandboxed(electron, argv):
+    """Replace this process with the window, Chromium sandbox off."""
+    os.execv(electron, argv[:1] + ["--no-sandbox"] + argv[1:])
+
+
 def main():
     if not os.path.isdir(APP_DIR):
         return fail(f"no application window found at {APP_DIR}")
@@ -70,26 +109,48 @@ def main():
 
     argv = [electron, APP_DIR, f"--class={WM_CLASS}"]
 
-    # Always --no-sandbox. Chromium's setuid helper is not enough on Ubuntu's
-    # AppArmor user-namespace policy: Electron exits before it creates a
-    # window, and a .desktop launch has nowhere to print that. This window
-    # loads no remote content (see the CSP in src/renderer/index.html), so
-    # refusing to start is worse than starting unsandboxed — which is also why
-    # postinst no longer installs chrome-sandbox setuid root: it would be a
-    # setuid binary nothing uses.
-    argv.append("--no-sandbox")
-
     # Wayland-native where the session is Wayland, XWayland otherwise. Left to
     # Electron rather than pinned, because pinning it breaks the other one.
     argv.append("--ozone-platform-hint=auto")
+    argv += sys.argv[1:]
 
     # Set, not setdefault. This is the installed launcher, so it should never
     # be the thing that loads the dev server — and setdefault let a stray
     # BAATSUN_DEV=1 already in the environment decide that for it.
     os.environ["BAATSUN_DEV"] = "0"
-    # Replace this process rather than forking: the tray and the .desktop entry
-    # both expect the thing they launched to *be* the window.
-    os.execv(electron, argv + sys.argv[1:])
+
+    if os.environ.get("BAATSUN_NO_SANDBOX") == "1" or sandbox_known_broken(electron):
+        unsandboxed(electron, argv)
+
+    # Sandboxed first. Where Chromium can't set up its sandbox — Ubuntu 24.04+
+    # without the AppArmor profile the .deb installs, a from-source checkout,
+    # a container — Electron aborts within a second, before any window
+    # exists, and a .desktop launch has nowhere to print that. So start it,
+    # and if it dies early with an error, remember that for this Electron
+    # build and come back up unsandboxed: a window that opens beats a secure
+    # one that never does. This window loads no remote content (see the CSP),
+    # and API keys never reach its renderer, which is what makes the fallback
+    # acceptable.
+    try:
+        proc = subprocess.Popen(argv)
+    except OSError as exc:
+        return fail(f"could not start electron: {exc}")
+    try:
+        code = proc.wait(timeout=SANDBOX_PROBE_SECONDS)
+    except subprocess.TimeoutExpired:
+        # Up and running. Leave it; nothing waits on this launcher.
+        return 0
+    except KeyboardInterrupt:
+        proc.terminate()
+        return 130
+    if code == 0:
+        # Normal quick exit, e.g. another window was already open and this
+        # launch just raised it (Electron's single-instance lock).
+        return 0
+    print(f"baatsun-gui: sandboxed start failed (exit {code}); "
+          "starting without the sandbox", file=sys.stderr)
+    remember_sandbox_broken(electron)
+    unsandboxed(electron, argv)
 
 
 if __name__ == "__main__":
