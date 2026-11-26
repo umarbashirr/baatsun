@@ -18,6 +18,7 @@ export const ACTIVITY_DAYS = 14
 // USD per million tokens, (input, output). A snapshot, like the Python one —
 // a model that isn't listed reports no cost rather than a guessed one.
 const PRICING = {
+  'gpt-6-luna': [0.1, 0.5],
   'gpt-4o-mini': [0.15, 0.6],
   'gpt-4o': [2.5, 10.0],
   'gpt-4.1': [2.0, 8.0],
@@ -40,7 +41,7 @@ export function prettyApp(app) {
   return base.charAt(0).toUpperCase() + base.slice(1)
 }
 
-export function computeStats(entries, cleanupModel = 'gpt-4o-mini') {
+export function computeStats(entries, cleanupModel = 'gpt-6-luna') {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
 
@@ -119,6 +120,46 @@ export function computeStats(entries, cleanupModel = 'gpt-4o-mini') {
     topApps: [...perApp.entries()].sort((a, b) => b[1] - a[1]),
     activity: [...counts.values()],
   }
+}
+
+// HISTORY_LIMIT in baatsun.py: the daemon keeps this many transcripts.
+export const HISTORY_LIMIT = 500
+
+/**
+ * Dictations per day for the last `days` days, today last.
+ *
+ * `coveredFrom` is the first day the history can actually speak for. Once
+ * history is at its cap, days before the oldest kept transcript read as zero
+ * only because they were dropped, and the chart has to say so rather than
+ * draw a quiet week that never happened.
+ */
+export function dailyCounts(entries, days) {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const counts = new Map()
+  for (let n = days - 1; n >= 0; n -= 1) {
+    const day = new Date(today)
+    day.setDate(day.getDate() - n)
+    counts.set(dayKey(day), { date: day, count: 0 })
+  }
+  let oldest = Infinity
+  for (const entry of entries) {
+    if (typeof entry.ts !== 'number') continue
+    oldest = Math.min(oldest, entry.ts)
+    const day = new Date(entry.ts * 1000)
+    day.setHours(0, 0, 0, 0)
+    const bucket = counts.get(dayKey(day))
+    if (bucket) bucket.count += 1
+  }
+  let coveredFrom = null
+  if (entries.length >= HISTORY_LIMIT && Number.isFinite(oldest)) {
+    // The oldest kept day is itself partial (its earlier entries were the
+    // ones dropped), so the first day history fully covers is the next one.
+    coveredFrom = new Date(oldest * 1000)
+    coveredFrom.setHours(0, 0, 0, 0)
+    coveredFrom.setDate(coveredFrom.getDate() + 1)
+  }
+  return { days: [...counts.values()], coveredFrom }
 }
 
 /** "2h 5m", "45s" — the same shape human_duration produces in Python. */

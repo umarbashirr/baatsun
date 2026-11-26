@@ -57,9 +57,12 @@ function createWindow() {
     height: 720,
     minWidth: 880,
     minHeight: 560,
-    // Dark by default and painted before the renderer has anything to show,
-    // so opening the window doesn't flash white on the way in.
-    backgroundColor: '#0b0b0e',
+    // The window's paper colour, painted before the renderer has anything to
+    // show, so opening it doesn't flash a different colour on the way in.
+    backgroundColor: '#faf8f3',
+    // Window and taskbar icon. The launcher uses the themed 'baatsun' icon
+    // the package installs; this covers the window itself everywhere else.
+    icon: path.join(__dirname, 'icon.png'),
     titleBarStyle: 'hidden',
     titleBarOverlay: false,
     // Keeps the window frame out of the way on GNOME while leaving the system

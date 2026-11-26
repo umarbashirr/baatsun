@@ -29,7 +29,8 @@ const DEFAULTS = {
   hotkey: 'ctrl+super',
   activation: 'hold',
   cleanup_enabled: false,
-  cleanup_model: 'gpt-4o-mini',
+  cleanup_model: 'gpt-6-luna',
+  cleanup_reasoning: 'low',
   cleanup_scope: 'prose',
   vocabulary: '',
   cleanup_strength: 'grammar',
@@ -47,7 +48,9 @@ const CHOICES = {
   hotkey: ['ctrl+super', 'ctrl+alt', 'alt+super', 'ctrl+shift'],
   cleanup_scope: ['prose', 'all'],
   cleanup_strength: ['grammar', 'natural'],
-  cleanup_model: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano'],
+  cleanup_model: ['gpt-6-luna', 'gpt-4o-mini', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o', 'gpt-4.1'],
+  // CLEANUP_REASONING_CHOICES in baatsun_config.py. Only reasoning models use it.
+  cleanup_reasoning: ['none', 'low', 'medium', 'high'],
   beam_size: [1, 3, 5],
   insert_method: ['paste', 'type'],
 }

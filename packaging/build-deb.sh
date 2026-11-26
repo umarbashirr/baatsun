@@ -100,6 +100,15 @@ install -m 644 "$REPO_ROOT/autostart/baatsun-pill.desktop" "$STAGING/etc/xdg/aut
 install -m 644 "$REPO_ROOT/autostart/baatsun-tray.desktop" "$STAGING/etc/xdg/autostart/baatsun-tray.desktop"
 install -m 644 "$REPO_ROOT/packaging/debian/copyright" "$STAGING/usr/share/doc/baatsun/copyright"
 
+# The app icon: the scalable SVG plus PNGs, so every launcher and dock finds
+# a sharp size. Desktop entries refer to it by name (Icon=baatsun).
+install -D -m 644 "$REPO_ROOT/brand/baatsun.svg" \
+    "$STAGING/usr/share/icons/hicolor/scalable/apps/baatsun.svg"
+for size in 16 24 32 48 64 128 256 512; do
+    install -D -m 644 "$REPO_ROOT/brand/png/baatsun-$size.png" \
+        "$STAGING/usr/share/icons/hicolor/${size}x${size}/apps/baatsun.png"
+done
+
 cp -r "$REPO_ROOT/gnome-extension/baatsun@umarbashirr.github.io" \
     "$STAGING/usr/share/gnome-shell/extensions/baatsun@umarbashirr.github.io"
 

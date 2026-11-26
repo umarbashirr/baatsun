@@ -23,17 +23,17 @@ const PERIODS = [
 
 function Tabs({ value, onChange }) {
   return (
-    <div className="inline-flex rounded-lg border border-ink-700/70 bg-ink-850 p-0.5">
+    <div className="inline-flex rounded-full border border-line bg-card p-1">
       {PERIODS.map(({ id, label }) => (
         <button
           key={id}
           type="button"
           onClick={() => onChange(id)}
           aria-pressed={id === value}
-          className={`rounded-[7px] px-3 py-1.5 text-[12.5px] transition-colors ${
+          className={`rounded-full px-4 py-1.5 text-[14px] transition-colors ${
             id === value
-              ? 'bg-ink-750 font-medium text-ink-50'
-              : 'text-ink-400 hover:text-ink-200'
+              ? 'bg-green font-medium text-cream'
+              : 'text-muted hover:text-ink'
           }`}
         >
           {label}
@@ -45,9 +45,9 @@ function Tabs({ value, onChange }) {
 
 function Row({ label, value }) {
   return (
-    <div className="flex items-baseline justify-between px-4 py-2.5">
-      <span className="text-[13px] text-ink-400">{label}</span>
-      <span className="text-[13px] tabular-nums text-ink-200">{value}</span>
+    <div className="flex items-baseline justify-between px-5 py-3">
+      <span className="text-[14px] text-muted">{label}</span>
+      <span className="text-[14px] tabular-nums text-ink">{value}</span>
     </div>
   )
 }
@@ -62,18 +62,18 @@ function Row({ label, value }) {
 function Vendor({ name, what, cost, estimated, children }) {
   return (
     <Card>
-      <div className="flex items-start justify-between gap-4 border-b border-ink-700/50 px-4 py-3.5">
+      <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
         <div>
-          <p className="text-[13.5px] font-medium text-ink-100">{name}</p>
-          <p className="mt-0.5 text-[12px] text-ink-500">{what}</p>
+          <p className="font-serif text-[21px] leading-tight text-ink">{name}</p>
+          <p className="mt-1 text-[14px] text-faint">{what}</p>
         </div>
-        <p className="text-[20px] font-semibold leading-none tabular-nums text-ink-50">
+        <p className="font-serif text-[28px] leading-none tabular-nums text-ink">
           {exactSpend(cost)}
         </p>
       </div>
-      <div className="divide-y divide-ink-700/40">{children}</div>
+      <div className="divide-y divide-line">{children}</div>
       {estimated > 0 && (
-        <div className="border-t border-ink-700/50 px-4 py-2.5 text-[12px] text-ink-500">
+        <div className="border-t border-line px-5 py-3 text-[14px] text-faint">
           {estimated} of these {estimated === 1 ? 'was' : 'were'} estimated — the call
           happened before the daemon recorded what it used.
         </div>
@@ -111,7 +111,7 @@ export default function Costs({ daemon }) {
   }, [load, newest, daemon.entries.length, daemon.connected])
 
   if (loading) {
-    return <p className="text-[13px] text-ink-500">Totalling…</p>
+    return <p className="text-[14px] text-faint">Totalling…</p>
   }
 
   if (!report) {
@@ -139,10 +139,10 @@ export default function Costs({ daemon }) {
     <div className="mx-auto max-w-[880px]">
       <div className="mb-7 flex items-end justify-between gap-4">
         <div>
-          <h2 className="text-[27px] font-semibold tracking-tight text-ink-50">
+          <h2 className="font-serif text-[42px] leading-[1.05] text-ink">
             {exactSpend(bucket.total)}
           </h2>
-          <p className="mt-1.5 text-[13.5px] text-ink-400">
+          <p className="mt-1.5 text-[14.5px] text-muted">
             across {bucket.dictations} dictation{bucket.dictations === 1 ? '' : 's'}
             {period === 'today'
               ? ' today'
@@ -201,14 +201,14 @@ export default function Costs({ daemon }) {
       </Section>
 
       <Section title="What this counts">
-        <Card className="divide-y divide-ink-700/50">
+        <Card className="divide-y divide-line">
           <div className="px-4 py-3">
-            <p className="text-[13px] text-ink-200">
+            <p className="text-[14px] text-ink">
               Totalled from the {report.window.entries} transcript
               {report.window.entries === 1 ? '' : 's'} still in history
               {since && `, back to ${since}`}.
             </p>
-            <p className="mt-1 text-[12.5px] leading-snug text-ink-500">
+            <p className="mt-1 text-[13.5px] leading-snug text-faint">
               {report.window.at_limit
                 ? `History is at its ${report.window.limit}-entry cap, so older dictations have already been dropped — even "All" is a floor on what you have spent, not the whole of it.`
                 : 'This is a window on history, not a lifetime ledger: clearing History resets it.'}
@@ -217,11 +217,11 @@ export default function Costs({ daemon }) {
 
           {bucket.unattributed > 0 && (
             <div className="px-4 py-3">
-              <p className="flex items-center gap-2 text-[13px] text-ink-200">
+              <p className="flex items-center gap-2 text-[14px] text-ink">
                 {bucket.unattributed} unattributed
                 <Badge tone="neutral">never billed</Badge>
               </p>
-              <p className="mt-1 text-[12.5px] leading-snug text-ink-500">
+              <p className="mt-1 text-[13.5px] leading-snug text-faint">
                 Written before the daemon recorded which backend transcribed them. There
                 is no way to tell now whether they ran locally or in the cloud, and a
                 guess is worst precisely on a spend total — so they are counted here and
@@ -231,13 +231,13 @@ export default function Costs({ daemon }) {
           )}
 
           <div className="px-4 py-3">
-            <p className="flex items-center gap-2 text-[13px] text-ink-200">
+            <p className="flex items-center gap-2 text-[14px] text-ink">
               Transcribing {report.backend === 'elevenlabs' ? 'in the cloud' : 'locally'}
               <Badge tone={report.backend === 'elevenlabs' ? 'accent' : 'good'}>
                 {report.backend}
               </Badge>
             </p>
-            <p className="mt-1 text-[12.5px] leading-snug text-ink-500">
+            <p className="mt-1 text-[13.5px] leading-snug text-faint">
               {report.backend === 'elevenlabs'
                 ? 'Every dictation from here bills ElevenLabs for its audio. Local transcriptions already in history stay at zero.'
                 : 'Local dictations cost nothing, and are recorded as zero rather than left unknown. Only the cleanup pass, if you have it on, reaches a paid API.'}
@@ -246,7 +246,7 @@ export default function Costs({ daemon }) {
         </Card>
       </Section>
 
-      <div className="flex items-center gap-3 text-[12px] text-ink-500">
+      <div className="flex items-center gap-3 text-[13px] text-faint">
         <Button variant="ghost" size="sm" onClick={load}>
           Refresh
         </Button>

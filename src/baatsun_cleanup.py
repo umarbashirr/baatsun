@@ -22,12 +22,30 @@ import baatsun_context
 
 API_URL = "https://api.openai.com/v1/chat/completions"
 # Floor for a short clip. A 10-minute brainstorm is ~1500 words and needs more
-# than 6s for gpt-4o-mini to lay it out; timeout_for() scales up, and the
+# than 6s for a fast model to lay it out; timeout_for() scales up, and the
 # daemon passes that in. verify_key() keeps this floor so a Test click stays
 # snappy. Giving up still types the raw transcript.
 MIN_TIMEOUT = 6
 MAX_TIMEOUT = 90
 TIMEOUT = MIN_TIMEOUT
+# A reasoning model thinks before it answers, so even a sentence takes longer
+# than gpt-4o-mini's ~1s. Give it a floor that even "medium" effort clears.
+MIN_REASONING_TIMEOUT = 20
+
+# Reasoning models (GPT-6 Luna, the GPT-5 family, the o-series) take
+# reasoning_effort, count their thinking against max_completion_tokens, and
+# don't document a temperature parameter, so they get a different payload.
+REASONING_PREFIXES = ("gpt-6", "gpt-5", "o1", "o3", "o4")
+REASONING_EFFORTS = ("none", "low", "medium", "high")
+DEFAULT_REASONING = "low"
+# Room for the model to think on top of the answer itself. Reasoning tokens
+# count against max_completion_tokens; too tight a cap ends the call with no
+# answer at all, which types the raw transcript.
+REASONING_BUDGET = 8000
+
+
+def is_reasoning(model):
+    return (model or "").startswith(REASONING_PREFIXES)
 
 # Light-touch dictation corrector. The previous "editor and translator" prompt
 # (~5k tokens, 40+ rules) licensed rephrasing, reordering and merging, and
@@ -79,6 +97,8 @@ GRAMMAR, NATURAL = "grammar", "natural"
 # changes its prices. A model that isn't listed reports no cost at all rather
 # than a guessed one — a wrong number on a spend figure is worse than a blank.
 PRICING = {
+    # Snapshot 2026-11-26. Reasoning tokens are billed as output.
+    "gpt-6-luna": (0.10, 0.50),
     "gpt-4o-mini": (0.15, 0.60),
     "gpt-4o": (2.50, 10.00),
     "gpt-4.1": (2.00, 8.00),
@@ -227,20 +247,24 @@ def build_system_prompt(vocabulary="", line_breaks=False, hinglish=False,
     return prompt
 
 
-def timeout_for(text):
+def timeout_for(text, model=None):
     """Seconds to wait for a cleanup request of `text`.
 
-    gpt-4o-mini is fast on a sentence and slow on a 10-minute dump. ~30 words
-    per extra second on top of the 6s floor, capped so a hung network cannot
-    park the finish thread for minutes.
+    A fast model is quick on a sentence and slow on a 10-minute dump: ~30
+    words per extra second on top of the 6s floor. A reasoning model thinks
+    first, so it starts from a 20s floor and gets a second per ~15 words.
+    Capped either way, so a hung network cannot park the finish thread for
+    minutes.
     """
     words = len((text or "").split())
+    if is_reasoning(model):
+        return max(MIN_REASONING_TIMEOUT, min(MAX_TIMEOUT, MIN_REASONING_TIMEOUT + words // 15))
     return max(MIN_TIMEOUT, min(MAX_TIMEOUT, 6 + words // 30))
 
 
-def clean(text, api_key, model="gpt-4o-mini", log=None, vocabulary="",
+def clean(text, api_key, model="gpt-6-luna", log=None, vocabulary="",
           line_breaks=False, hinglish=False, strength=GRAMMAR, usage=None,
-          surface=None, timeout=None):
+          surface=None, timeout=None, reasoning=DEFAULT_REASONING):
     """Return the cleaned transcript, or None if it couldn't be produced.
 
     None is not an error the caller needs to handle beyond falling back to the
@@ -254,7 +278,7 @@ def clean(text, api_key, model="gpt-4o-mini", log=None, vocabulary="",
     if not text or not api_key:
         return None
 
-    payload = json.dumps({
+    request_body = {
         "model": model,
         "messages": [
             {"role": "system", "content": build_system_prompt(
@@ -266,12 +290,22 @@ def clean(text, api_key, model="gpt-4o-mini", log=None, vocabulary="",
             )},
             {"role": "user", "content": text},
         ],
+    }
+    # Cleaned text is about as long as the input; this is a runaway guard,
+    # not a target. 4 tokens per word is generous for English.
+    answer_cap = max(256, len(text.split()) * 4)
+    if is_reasoning(model):
+        request_body["reasoning_effort"] = (
+            reasoning if reasoning in REASONING_EFFORTS else DEFAULT_REASONING)
+        # Thinking counts against this cap, so leave room for it as well as
+        # the answer. No temperature: reasoning models don't document one,
+        # and an unsupported parameter would fail every call with a 400.
+        request_body["max_completion_tokens"] = answer_cap + REASONING_BUDGET
+    else:
         # A correction task, not a creative one: as deterministic as it gets.
-        "temperature": 0,
-        # Cleaned text is about as long as the input; this is a runaway guard,
-        # not a target. 4 tokens per word is generous for English.
-        "max_tokens": max(256, len(text.split()) * 4),
-    }).encode()
+        request_body["temperature"] = 0
+        request_body["max_tokens"] = answer_cap
+    payload = json.dumps(request_body).encode()
 
     request = urllib.request.Request(
         API_URL,
@@ -334,11 +368,13 @@ def clean(text, api_key, model="gpt-4o-mini", log=None, vocabulary="",
     return cleaned
 
 
-def verify_key(api_key, model="gpt-4o-mini"):
+def verify_key(api_key, model="gpt-6-luna"):
     """Round-trip a trivial request. Returns (ok, message) for the GUI."""
     if not api_key:
         return False, "No API key set."
-    result = clean("hello world this is a test", api_key, model)
+    # No thinking needed to prove a key works, and it keeps the Test snappy.
+    result = clean("hello world this is a test", api_key, model, reasoning="none",
+                   timeout=timeout_for("", model))
     if result is None:
         return False, "Key rejected, or OpenAI unreachable. See the daemon log."
     return True, f"Working — {model} responded."
@@ -346,6 +382,7 @@ def verify_key(api_key, model="gpt-4o-mini"):
 
 def _record_usage(usage, model, reported):
     prompt = reported.get("prompt_tokens") or 0
+    # Includes any reasoning tokens: they're billed as output.
     completion = reported.get("completion_tokens") or 0
     usage.update({
         "model": model,
@@ -353,6 +390,9 @@ def _record_usage(usage, model, reported):
         "out": completion,
         "cost": cost_of(model, prompt, completion),
     })
+    reasoning = (reported.get("completion_tokens_details") or {}).get("reasoning_tokens")
+    if reasoning:
+        usage["reasoning"] = reasoning
 
 
 def _report(log, message):

@@ -1,21 +1,134 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useDaemon } from './lib/useDaemon.js'
+import logo from './assets/logo.svg'
 import Home from './pages/Home.jsx'
 import Dictate from './pages/Dictate.jsx'
 import History from './pages/History.jsx'
 import Costs from './pages/Costs.jsx'
 import Words from './pages/Words.jsx'
 import Settings from './pages/Settings.jsx'
-import { Badge } from './components/ui.jsx'
+import { Badge, Button } from './components/ui.jsx'
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from './components/alert-dialog.jsx'
 
 const PAGES = [
   { id: 'home', label: 'Home', Component: Home },
   { id: 'dictate', label: 'Dictate', Component: Dictate },
   { id: 'history', label: 'History', Component: History },
-  { id: 'costs', label: 'Costs', Component: Costs },
   { id: 'words', label: 'Words', Component: Words },
+  { id: 'costs', label: 'Costs', Component: Costs },
   { id: 'settings', label: 'Settings', Component: Settings },
 ]
+// The everyday pages sit at the top; Settings sits at the foot of the
+// sidebar, where people look for it and where it can't crowd the rest.
+const MAIN = PAGES.filter((p) => p.id !== 'settings')
+
+const HOTKEY_KEYS = {
+  'ctrl+super': ['Ctrl', 'Super'],
+  'ctrl+alt': ['Ctrl', 'Alt'],
+  'alt+super': ['Alt', 'Super'],
+  'ctrl+shift': ['Ctrl', 'Shift'],
+}
+
+function Keycaps({ keys }) {
+  return (
+    <span className="inline-flex items-center gap-1 align-middle">
+      {keys.map((k, i) => (
+        <React.Fragment key={k}>
+          {i > 0 && <span className="text-faint">+</span>}
+          <kbd className="rounded-[6px] border border-line bg-cream px-1.5 py-px font-sans text-[12px] font-medium text-ink shadow-[0_1px_0_var(--color-sand-2)]">
+            {k}
+          </kbd>
+        </React.Fragment>
+      ))}
+    </span>
+  )
+}
+
+/**
+ * What the daemon is doing right now, at the foot of the sidebar.
+ *
+ * Replaces a bare "Connected": the useful things to know at a glance are
+ * whether you can dictate, how (your actual hotkey), and whether it's
+ * listening. Clicking it opens Dictate.
+ */
+function StatusCard({ daemon, config, onOpen }) {
+  const state = daemon.state.state
+  const keys = HOTKEY_KEYS[config?.hotkey] || HOTKEY_KEYS['ctrl+super']
+  const toggle = config?.activation === 'toggle'
+
+  let dot = 'bg-good'
+  let title = 'Ready'
+  let body = (
+    <>
+      <Keycaps keys={keys} />
+      <span className="mt-1.5 block">{toggle ? 'Press' : 'Hold'} anywhere to dictate</span>
+    </>
+  )
+  if (!daemon.connected) {
+    dot = 'bg-faint'
+    title = 'Daemon offline'
+    body = 'Reconnecting…'
+  } else if (state === 'listening') {
+    dot = 'bg-live animate-live'
+    title = 'Listening'
+    body = toggle ? 'Press the hotkey again to stop' : 'Let go to transcribe'
+  } else if (state === 'transcribing') {
+    dot = null
+    title = 'Transcribing'
+    body = config?.stt_backend === 'elevenlabs' ? 'With ElevenLabs' : 'On your CPU'
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      // One height for every state, so Settings above it doesn't jump each
+      // time a dictation starts and ends.
+      className="min-h-[100px] w-full rounded-[18px] border border-line bg-card px-4 py-3 text-left shadow-[0_1px_3px_rgba(27,26,23,0.06)] transition-colors hover:border-sand-2"
+    >
+      <span className="flex items-center gap-2 text-[14px] font-medium text-ink">
+        {dot ? (
+          <span className={`h-2 w-2 rounded-full ${dot}`} />
+        ) : (
+          <span className="h-3 w-3 animate-spin rounded-full border-2 border-green/25 border-t-green" />
+        )}
+        {title}
+      </span>
+      <span className="mt-1.5 block text-[13px] leading-snug text-muted" aria-live="polite">
+        {body}
+      </span>
+    </button>
+  )
+}
+
+function NavItem({ id, label, current, onSelect, marker }) {
+  const on = id === current
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(id)}
+      aria-current={on ? 'page' : undefined}
+      className={`flex items-center gap-3 rounded-full px-4 py-2.5 text-[15px] transition-colors ${
+        on
+          ? 'bg-card font-medium text-ink shadow-[0_1px_3px_rgba(27,26,23,0.08)]'
+          : 'text-muted hover:bg-sand-2/60 hover:text-ink'
+      }`}
+    >
+      <Icon name={id} className={`h-[18px] w-[18px] ${on ? 'text-green' : ''}`} />
+      <span className="flex-1 text-left">{label}</span>
+      {marker}
+    </button>
+  )
+}
 
 const ICONS = {
   home: 'M3 10.5 12 3l9 7.5M5.5 9v11h13V9',
@@ -58,18 +171,18 @@ function TitleBar({ title, state, connected }) {
   const transcribing = state.state === 'transcribing'
 
   return (
-    <header className="drag flex h-12 shrink-0 items-center justify-between border-b border-ink-700/60 bg-ink-900/80 px-5 backdrop-blur">
+    <header className="drag flex h-14 shrink-0 items-center justify-between px-8">
       <div className="flex items-center gap-3">
-        <h1 className="text-[13.5px] font-semibold text-ink-100">{title}</h1>
+        <h1 className="text-[15px] font-medium text-muted">{title}</h1>
         {recording && (
           <Badge tone="live">
-            <span className="animate-live h-1.5 w-1.5 rounded-full bg-live-500" />
+            <span className="animate-live h-1.5 w-1.5 rounded-full bg-live" />
             Recording
           </Badge>
         )}
         {transcribing && (
           <Badge tone="accent">
-            <span className="animate-live h-1.5 w-1.5 rounded-full bg-saffron-500" />
+            <span className="animate-live h-1.5 w-1.5 rounded-full bg-green" />
             Transcribing
           </Badge>
         )}
@@ -91,8 +204,8 @@ function TitleBar({ title, state, connected }) {
             type="button"
             aria-label={label}
             onClick={action}
-            className={`grid h-7 w-7 place-items-center rounded-md text-ink-400 transition-colors hover:text-ink-100 ${
-              label === 'Close' ? 'hover:bg-live-500 hover:text-white' : 'hover:bg-ink-750'
+            className={`grid h-8 w-8 place-items-center rounded-full text-muted transition-colors hover:text-ink ${
+              label === 'Close' ? 'hover:bg-live hover:text-white' : 'hover:bg-sand'
             }`}
           >
             <svg
@@ -114,55 +227,107 @@ function TitleBar({ title, state, connected }) {
 
 export default function App() {
   const [page, setPage] = useState('home')
+  // A page with unsaved work (Settings) registers a check here; switching
+  // pages asks first rather than silently throwing the work away.
+  const guard = useRef(null)
+  const [leaving, setLeaving] = useState(null)
+  const go = (id) => {
+    if (id === page) return
+    if (guard.current?.()) setLeaving(id)
+    else setPage(id)
+  }
   const daemon = useDaemon()
   const active = PAGES.find((p) => p.id === page) || PAGES[0]
+
+  // The sidebar's status card shows the hotkey and activation the daemon is
+  // actually using: re-read when it reconnects (it restarts after those
+  // change) and when Settings says it saved.
+  const [config, setConfig] = useState(null)
+  useEffect(() => {
+    const read = () =>
+      window.baatsun
+        .loadConfig()
+        .then(({ config: c }) => setConfig(c))
+        .catch(() => {})
+    read()
+    window.addEventListener('baatsun:config-saved', read)
+    return () => window.removeEventListener('baatsun:config-saved', read)
+  }, [daemon.connected])
+
+  // Dictate carries the live state in the nav, so it shows from any page.
+  const recState = daemon.connected ? daemon.state.state : 'idle'
+  const dictateMarker =
+    recState === 'listening' ? (
+      <span className="animate-live h-2 w-2 rounded-full bg-live" aria-label="Listening" />
+    ) : recState === 'transcribing' ? (
+      <span
+        className="h-3 w-3 animate-spin rounded-full border-2 border-green/25 border-t-green"
+        aria-label="Transcribing"
+      />
+    ) : null
   const { Component } = active
 
   return (
     <div className="flex h-full">
-      <nav className="drag flex w-[196px] shrink-0 flex-col border-r border-ink-700/60 bg-ink-950">
-        <div className="flex h-12 items-center gap-2.5 px-5">
-          <div className="grid h-6 w-6 place-items-center rounded-md bg-saffron-500 text-[13px] font-bold text-ink-950">
-            ब
-          </div>
-          <span className="text-[14px] font-semibold tracking-tight">Baatsun</span>
+      <nav className="drag flex w-[220px] shrink-0 flex-col bg-sand" aria-label="Pages">
+        {/* The logo: ब hanging from the Baatsun pill (brand/README.md). */}
+        <div className="flex h-16 items-center gap-2.5 px-5 pt-1">
+          <img src={logo} alt="" width="30" height="30" className="rounded-[8px]" draggable="false" />
+          <span className="font-serif text-[25px] leading-none text-ink">baatsun</span>
         </div>
 
-        <div className="no-drag flex flex-1 flex-col gap-0.5 px-3 py-3">
-          {PAGES.map(({ id, label }) => (
-            <button
+        <div className="no-drag flex flex-1 flex-col gap-1 px-3 pt-3">
+          {MAIN.map(({ id, label }) => (
+            <NavItem
               key={id}
-              type="button"
-              onClick={() => setPage(id)}
-              aria-current={id === page ? 'page' : undefined}
-              className={`flex items-center gap-3 rounded-lg px-3 py-2 text-[13.5px] transition-colors ${
-                id === page
-                  ? 'bg-ink-800 font-medium text-ink-50'
-                  : 'text-ink-400 hover:bg-ink-850 hover:text-ink-200'
-              }`}
-            >
-              <Icon name={id} />
-              {label}
-            </button>
+              id={id}
+              label={label}
+              current={page}
+              onSelect={go}
+              marker={id === 'dictate' ? dictateMarker : null}
+            />
           ))}
         </div>
 
-        <div className="no-drag px-5 pb-4 text-[11.5px] text-ink-500">
-          <span
-            className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle ${
-              daemon.connected ? 'bg-good-500' : 'bg-ink-600'
-            }`}
-          />
-          {daemon.connected ? 'Connected' : 'Reconnecting…'}
+        <div className="no-drag flex flex-col gap-3 px-3 pb-4">
+          <NavItem id="settings" label="Settings" current={page} onSelect={go} />
+          <StatusCard daemon={daemon} config={config} onOpen={() => go('dictate')} />
         </div>
       </nav>
 
       <main className="flex min-w-0 flex-1 flex-col">
         <TitleBar title={active.label} state={daemon.state} connected={daemon.connected} />
-        <div key={page} className="animate-rise flex-1 overflow-y-auto px-8 py-7">
-          <Component daemon={daemon} onNavigate={setPage} />
+        <div key={page} className="animate-rise flex-1 overflow-y-auto px-8 pb-10 pt-4">
+          <Component daemon={daemon} onNavigate={go} setGuard={(fn) => (guard.current = fn)} />
         </div>
       </main>
+
+      <AlertDialog open={!!leaving} onOpenChange={(open) => !open && setLeaving(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Leave without saving?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your changes in {active.label} haven’t been saved. If you leave now, they’re lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="justify-end">
+            <AlertDialogCancel asChild>
+              <Button>Keep editing</Button>
+            </AlertDialogCancel>
+            <AlertDialogAction asChild>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  guard.current = null
+                  setPage(leaving)
+                }}
+              >
+                Discard and leave
+              </Button>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

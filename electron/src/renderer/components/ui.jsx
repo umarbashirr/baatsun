@@ -1,4 +1,11 @@
-import React from 'react'
+import React, { useId } from 'react'
+import {
+  Select as SelectRoot,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from './select.jsx'
 
 /**
  * The small shared vocabulary the pages are built from.
@@ -6,12 +13,15 @@ import React from 'react'
  * Kept in one file because there are only a handful and they are all one
  * screenful — splitting them across a directory would cost more navigation
  * than it saves.
+ *
+ * The look follows the website: white cards on warm paper, pill-shaped
+ * controls, deep green for the one thing that matters on a screen.
  */
 
 export function Card({ className = '', children, ...rest }) {
   return (
     <div
-      className={`rounded-[14px] border border-ink-700/70 bg-ink-850 ${className}`}
+      className={`rounded-[20px] border border-line bg-card shadow-[0_1px_2px_rgba(27,26,23,0.04)] ${className}`}
       {...rest}
     >
       {children}
@@ -21,16 +31,12 @@ export function Card({ className = '', children, ...rest }) {
 
 export function Section({ title, description, action, children }) {
   return (
-    <section className="mb-9">
+    <section className="mb-10">
       {(title || action) && (
-        <header className="mb-3 flex items-end justify-between gap-4">
+        <header className="mb-3.5 flex items-end justify-between gap-4">
           <div>
-            {title && (
-              <h2 className="text-[13px] font-semibold uppercase tracking-[0.09em] text-ink-400">
-                {title}
-              </h2>
-            )}
-            {description && <p className="mt-1 text-[13px] text-ink-400">{description}</p>}
+            {title && <h2 className="font-serif text-[22px] leading-tight text-ink">{title}</h2>}
+            {description && <p className="mt-1 text-[14px] text-muted">{description}</p>}
           </div>
           {action}
         </header>
@@ -40,78 +46,112 @@ export function Section({ title, description, action, children }) {
   )
 }
 
-export function Button({
-  variant = 'default',
-  size = 'md',
-  className = '',
-  children,
-  ...rest
-}) {
+// forwardRef so Radix can focus it when used through asChild (AlertDialog's
+// Cancel and Action take focus by ref).
+export const Button = React.forwardRef(function Button(
+  { variant = 'default', size = 'md', className = '', children, ...rest },
+  ref,
+) {
   const variants = {
-    default:
-      'bg-ink-750 text-ink-100 hover:bg-ink-700 border border-ink-600/80 active:scale-[0.985]',
-    primary:
-      'bg-saffron-500 text-ink-950 hover:bg-saffron-400 font-semibold active:scale-[0.985]',
-    ghost: 'text-ink-300 hover:text-ink-100 hover:bg-ink-800 border border-transparent',
-    danger:
-      'text-live-500 hover:bg-live-500/10 border border-live-500/30 hover:border-live-500/50',
+    default: 'bg-card text-ink border border-line hover:bg-sand hover:border-sand-2',
+    primary: 'bg-green text-cream font-semibold hover:bg-green-2 border border-transparent',
+    ghost: 'text-muted hover:text-ink hover:bg-sand border border-transparent',
+    danger: 'text-live border border-live/30 hover:bg-live/8 hover:border-live/50',
   }
   const sizes = {
-    sm: 'h-8 px-3 text-[13px]',
-    md: 'h-9 px-4 text-[13px]',
-    lg: 'h-11 px-6 text-[14px]',
+    sm: 'h-8 px-3.5 text-[13.5px]',
+    md: 'h-10 px-5 text-[14px]',
+    lg: 'h-12 px-7 text-[15px]',
   }
   return (
     <button
+      ref={ref}
       type="button"
-      className={`no-drag inline-flex items-center justify-center gap-2 rounded-lg transition-all duration-150 disabled:pointer-events-none disabled:opacity-40 ${variants[variant]} ${sizes[size]} ${className}`}
+      className={`no-drag inline-flex items-center justify-center gap-2 rounded-full font-medium transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40 ${variants[variant]} ${sizes[size]} ${className}`}
       {...rest}
     >
       {children}
     </button>
   )
-}
+})
 
 export function Field({ label, hint, children, htmlFor }) {
+  // Tie the label to its control. Without an id the control had no accessible
+  // name at all: a screen reader announced "button" or "combo box" and nothing
+  // about what it set. Clicking the label now also opens or focuses it.
+  const autoId = useId()
+  const only = React.Children.count(children) === 1 && React.isValidElement(children)
+  const id = htmlFor || (only ? children.props.id || autoId : undefined)
+  const control = only && !htmlFor && !children.props.id ? React.cloneElement(children, { id }) : children
   return (
-    <div className="flex flex-col gap-1.5 border-b border-ink-700/50 px-4 py-3.5 last:border-0 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+    <div className="flex flex-col gap-2 border-b border-line px-5 py-4 last:border-0 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
       <div className="min-w-0 sm:max-w-[58%]">
-        <label htmlFor={htmlFor} className="block text-[13.5px] font-medium text-ink-100">
+        <label htmlFor={id} className="block text-[15px] font-medium text-ink">
           {label}
         </label>
-        {hint && <p className="mt-0.5 text-[12.5px] leading-snug text-ink-400">{hint}</p>}
+        {hint && <p className="mt-0.5 text-[13.5px] leading-snug text-muted">{hint}</p>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="shrink-0">{control}</div>
     </div>
   )
 }
 
-export function Select({ value, onChange, options, className = '' }) {
+// Radix reserves the empty string (it means "no selection"), but settings use
+// '' for "the default", e.g. the recommended model. Map it to a sentinel and
+// back so callers never see the difference.
+const EMPTY = '__baatsun_default__'
+const toItem = (v) => (v === '' || v == null ? EMPTY : String(v))
+
+/** Keycaps for a hotkey option, so "Ctrl + Super" reads as keys, not prose. */
+function Keys({ keys }) {
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={`h-9 min-w-[190px] rounded-lg border border-ink-600/80 bg-ink-750 px-3 text-[13px] text-ink-100 outline-none transition-colors hover:border-ink-500 focus:border-saffron-500 ${className}`}
-    >
-      {options.map(({ value: v, label }) => (
-        <option key={v} value={v} className="bg-ink-800">
-          {label}
-        </option>
+    <span className="inline-flex items-center gap-1">
+      {keys.map((k, i) => (
+        <React.Fragment key={k}>
+          {i > 0 && <span className="text-faint">+</span>}
+          <kbd className="rounded-md border border-line bg-card px-1.5 py-px font-sans text-[12.5px] font-medium text-ink shadow-[0_1px_0_var(--color-sand-2)]">
+            {k}
+          </kbd>
+        </React.Fragment>
       ))}
-    </select>
+    </span>
   )
 }
 
-export function Toggle({ checked, onChange, label }) {
+/**
+ * The app's select: shadcn/ui's Select (Radix underneath) with the same props
+ * as the native one it replaces. Options are { value, label, hint?, keys? };
+ * the hint shows under the option in the open list only, so the closed
+ * control stays a clean, short label.
+ */
+export function Select({ value, onChange, options, className = '', id, ...rest }) {
+  return (
+    <SelectRoot value={toItem(value)} onValueChange={(v) => onChange(v === EMPTY ? '' : v)}>
+      <SelectTrigger id={id} className={className} {...rest}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((o) => (
+          <SelectItem key={toItem(o.value)} value={toItem(o.value)} hint={o.hint}>
+            {o.keys ? <Keys keys={o.keys} /> : o.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </SelectRoot>
+  )
+}
+
+export function Toggle({ checked, onChange, label, id }) {
   return (
     <button
+      id={id}
       type="button"
       role="switch"
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={`relative h-[26px] w-[46px] shrink-0 rounded-full transition-colors duration-200 ${
-        checked ? 'bg-saffron-500' : 'bg-ink-700'
+      className={`relative h-[28px] w-[48px] shrink-0 rounded-full transition-colors duration-200 ${
+        checked ? 'bg-green' : 'bg-sand-2'
       }`}
     >
       {/*
@@ -124,7 +164,7 @@ export function Toggle({ checked, onChange, label }) {
         and border, but not its text-align.
       */}
       <span
-        className={`absolute left-0 top-[3px] h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+        className={`absolute left-0 top-[3px] h-[22px] w-[22px] rounded-full bg-white shadow-[0_1px_3px_rgba(27,26,23,0.25)] transition-transform duration-200 ${
           checked ? 'translate-x-[23px]' : 'translate-x-[3px]'
         }`}
       />
@@ -135,7 +175,7 @@ export function Toggle({ checked, onChange, label }) {
 export function TextInput({ className = '', ...rest }) {
   return (
     <input
-      className={`h-9 rounded-lg border border-ink-600/80 bg-ink-750 px-3 text-[13px] text-ink-100 outline-none transition-colors placeholder:text-ink-500 hover:border-ink-500 focus:border-saffron-500 ${className}`}
+      className={`h-10 rounded-full border border-line bg-cream px-4 text-[14px] text-ink outline-none transition-colors placeholder:text-faint hover:border-sand-2 focus:border-green ${className}`}
       style={{ userSelect: 'text' }}
       {...rest}
     />
@@ -144,26 +184,70 @@ export function TextInput({ className = '', ...rest }) {
 
 export function Empty({ icon, title, children }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-[14px] border border-dashed border-ink-700 px-6 py-16 text-center">
-      {icon && <div className="mb-3 text-ink-600">{icon}</div>}
-      <p className="text-[14px] font-medium text-ink-200">{title}</p>
-      {children && <p className="mt-1.5 max-w-sm text-[13px] text-ink-400">{children}</p>}
+    <div className="flex flex-col items-center justify-center rounded-[20px] border border-dashed border-sand-2 bg-card/50 px-6 py-16 text-center">
+      {icon && <div className="mb-3 text-faint">{icon}</div>}
+      <p className="font-serif text-[20px] text-ink">{title}</p>
+      {children && <p className="mt-1.5 max-w-sm text-[14px] text-muted">{children}</p>}
     </div>
   )
 }
 
 export function Badge({ tone = 'neutral', children }) {
   const tones = {
-    neutral: 'bg-ink-750 text-ink-300 border-ink-600/70',
-    accent: 'bg-saffron-500/12 text-saffron-400 border-saffron-500/25',
-    live: 'bg-live-500/12 text-live-500 border-live-500/25',
-    good: 'bg-good-500/12 text-good-500 border-good-500/25',
+    neutral: 'bg-sand text-muted border-transparent',
+    accent: 'bg-mint text-green border-transparent',
+    live: 'bg-live/10 text-live border-live/20',
+    good: 'bg-mint text-good border-transparent',
   }
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-[3px] text-[11.5px] font-medium ${tones[tone]}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[12.5px] font-medium ${tones[tone]}`}
     >
       {children}
     </span>
+  )
+}
+
+/**
+ * A pill-shaped segmented control: one choice from a few, all visible.
+ * Arrow keys move between options the way a radio group does.
+ */
+export function Segmented({ value, onChange, options, label }) {
+  const move = (e) => {
+    const i = options.findIndex((o) => o.value === value)
+    const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0
+    if (!d) return
+    e.preventDefault()
+    const next = options[(i + d + options.length) % options.length]
+    onChange(next.value)
+    e.currentTarget.querySelector(`[data-value="${next.value}"]`)?.focus()
+  }
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      onKeyDown={move}
+      className="no-drag inline-flex rounded-full border border-line bg-card p-1"
+    >
+      {options.map((o) => {
+        const on = o.value === value
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            tabIndex={on ? 0 : -1}
+            data-value={o.value}
+            onClick={() => onChange(o.value)}
+            className={`rounded-full px-3.5 py-1.5 text-[13.5px] transition-colors duration-150 ${
+              on ? 'bg-green font-medium text-cream' : 'text-muted hover:text-ink'
+            }`}
+          >
+            {o.label}
+          </button>
+        )
+      })}
+    </div>
   )
 }

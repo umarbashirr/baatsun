@@ -1,6 +1,23 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Card, Button, Field, Select, Toggle, TextInput, Section, Badge } from '../components/ui.jsx'
-import { useTimer } from '../lib/useTimer.js'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+} from '../components/dialog.jsx'
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from '../components/alert-dialog.jsx'
 
 // Changing any of these means the daemon has to come back up: they are read
 // once at startup, and stt_backend in particular decides whether the local
@@ -15,31 +32,320 @@ const RESTART_KEYS = [
   'hinglish',
 ]
 
+// Each choice is { label, hint?, keys? }. The label is what the closed control
+// shows, so it stays short; the hint explains the choice in the open list.
 const HOTKEY_LABELS = {
-  'ctrl+super': 'Ctrl + Super',
-  'ctrl+alt': 'Ctrl + Alt',
-  'alt+super': 'Alt + Super',
-  'ctrl+shift': 'Ctrl + Shift',
+  'ctrl+super': { label: 'Ctrl + Super', keys: ['Ctrl', 'Super'], hint: 'The default' },
+  'ctrl+alt': { label: 'Ctrl + Alt', keys: ['Ctrl', 'Alt'] },
+  'alt+super': { label: 'Alt + Super', keys: ['Alt', 'Super'] },
+  'ctrl+shift': { label: 'Ctrl + Shift', keys: ['Ctrl', 'Shift'] },
 }
 const ACTIVATION_LABELS = {
-  hold: 'Hold to talk',
-  toggle: 'Press to start, press to stop',
-  hybrid: 'Tap or hold',
+  hold: { label: 'Hold to talk', hint: 'Speak while the keys are held, let go to finish' },
+  toggle: { label: 'Press to start and stop', hint: 'Press once to start, again to finish' },
+  hybrid: { label: 'Tap or hold', hint: 'A quick tap toggles; holding works like hold to talk' },
 }
 const BACKEND_LABELS = {
-  local: 'This machine (offline)',
-  elevenlabs: 'ElevenLabs Scribe v2 (cloud)',
+  local: { label: 'This machine', hint: 'Offline. Your audio never leaves the computer' },
+  elevenlabs: { label: 'ElevenLabs Scribe v2', hint: 'Cloud. More accurate, but sends your audio' },
 }
-const SCOPE_LABELS = { prose: 'Prose windows only', all: 'Everything I dictate' }
-const STRENGTH_LABELS = { grammar: 'Proofread only', natural: 'Proofread + light grammar' }
-const BEAM_LABELS = { 1: 'Fastest (least accurate)', 3: 'Balanced', 5: 'Most accurate' }
+const SCOPE_LABELS = {
+  prose: { label: 'Prose windows only', hint: 'Terminals and code editors stay verbatim' },
+  all: { label: 'Everything I dictate', hint: 'Including terminals and editors' },
+}
+const STRENGTH_LABELS = {
+  grammar: { label: 'Proofread only', hint: 'Punctuation, fillers and stutters' },
+  natural: { label: 'Proofread + light grammar', hint: 'Also fixes small grammar slips' },
+}
+const BEAM_LABELS = {
+  1: { label: 'Fastest', hint: 'Least accurate' },
+  3: { label: 'Balanced' },
+  5: { label: 'Most accurate', hint: 'A little slower per dictation' },
+}
+const CLEANUP_MODEL_LABELS = {
+  'gpt-6-luna': { label: 'GPT-6 Luna', hint: 'Recommended. Fast, inexpensive, and it reasons' },
+  'gpt-4o-mini': { label: 'GPT-4o mini', hint: 'Older and quickest; no reasoning' },
+  'gpt-4.1-mini': { label: 'GPT-4.1 mini', hint: 'Older; no reasoning' },
+  'gpt-4.1-nano': { label: 'GPT-4.1 nano', hint: 'Older and cheapest; no reasoning' },
+  'gpt-4o': { label: 'GPT-4o', hint: 'Older and much pricier' },
+  'gpt-4.1': { label: 'GPT-4.1', hint: 'Older and much pricier' },
+}
+// How hard a reasoning model thinks before correcting. Proofreading doesn't
+// need much; higher is slower and bills the thinking as output tokens.
+const REASONING_LABELS = {
+  none: { label: 'None', hint: 'Fastest. Answers without thinking first' },
+  low: { label: 'Low', hint: 'The default. Quick, with a little thought' },
+  medium: { label: 'Medium', hint: 'More thought, a few seconds slower' },
+  high: { label: 'High', hint: 'Slowest. Rarely needed for dictation' },
+}
+const isReasoningModel = (m) => /^(gpt-6|gpt-5|o1|o3|o4)/.test(m || '')
+
 const INSERT_LABELS = {
-  paste: 'Paste (instant, restores your clipboard)',
-  type: 'Type key by key (slower)',
+  paste: { label: 'Paste', hint: 'Instant, and your clipboard is put back' },
+  type: { label: 'Type key by key', hint: 'Slower, especially for long text' },
+}
+
+// A spinner that flashes for a frame and turns into a tick reads as a glitch.
+// Hold the working state long enough to be seen; real work is never slowed.
+const atLeast = (promise, ms = 450) =>
+  Promise.all([promise, new Promise((r) => setTimeout(r, ms))]).then(([v]) => v)
+
+function StepIcon({ status }) {
+  if (status === 'working') {
+    return <span className="h-[18px] w-[18px] animate-spin rounded-full border-2 border-green/20 border-t-green" />
+  }
+  if (status === 'done' || status === 'failed') {
+    return (
+      <span
+        className={`grid h-[20px] w-[20px] place-items-center rounded-full ${
+          status === 'done' ? 'bg-green text-cream' : 'bg-live text-white'
+        }`}
+      >
+        <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d={status === 'done' ? 'M20 6 9 17l-5-5' : 'M18 6 6 18M6 6l12 12'} />
+        </svg>
+      </span>
+    )
+  }
+  return <span className="mx-[5px] h-2.5 w-2.5 rounded-full border-2 border-sand-2" />
+}
+
+const COPY = {
+  save: {
+    working: (restart) => ({
+      title: 'Saving your settings',
+      body: restart
+        ? 'Then the daemon restarts to pick them up. Dictation pauses for a moment.'
+        : 'This only takes a moment.',
+    }),
+    done: (restart) => ({
+      title: 'Settings saved',
+      body: restart
+        ? 'The daemon restarted and is running with your new settings.'
+        : 'Your changes take effect from your next dictation.',
+    }),
+    partial: (_, error) => ({
+      title: 'Saved, but the daemon didn’t restart',
+      body: 'Your changes are saved, but they won’t apply until the daemon restarts.',
+      detail: error,
+    }),
+    error: (_, error) => ({
+      title: 'Couldn’t save your settings',
+      body: 'Your changes are still here, so you can try again.',
+      detail: error,
+    }),
+  },
+  restart: {
+    working: () => ({ title: 'Restarting the daemon', body: 'Dictation pauses for a moment.' }),
+    done: () => ({ title: 'Daemon restarted', body: 'It’s running again and ready for your next dictation.' }),
+    error: (_, error) => ({
+      title: 'The daemon didn’t restart',
+      body: 'Dictation won’t work until it’s running again.',
+      detail: error,
+    }),
+  },
+}
+
+/**
+ * Saving and restarting, shown as a dialog in the middle of the window.
+ *
+ * Each step gets its own line so a two-part save (write the config, restart
+ * the daemon) says which part is happening, and which part failed. While
+ * anything is running the dialog can't be dismissed: closing it would hide
+ * work that is still going on, not stop it.
+ */
+function OperationDialog({ op, onClose, onRetry, onRetryRestart, returnFocus }) {
+  const working = op && !op.outcome
+  const phase = op ? op.outcome || 'working' : 'working'
+  // Once the settings are written, a save that is still working is only
+  // restarting the daemon (including a retry), so say that.
+  const restarting =
+    op && phase === 'working' && op.kind === 'save' && op.steps[0].status === 'done'
+  const copy = !op
+    ? { title: '', body: '' }
+    : restarting
+      ? COPY.restart.working()
+      : COPY[op.kind][phase](op.restart, op.error || '')
+  const keepOpen = (e) => working && e.preventDefault()
+
+  return (
+    <Dialog open={!!op} onOpenChange={(open) => !open && !working && onClose()}>
+      <DialogContent
+        onEscapeKeyDown={keepOpen}
+        onPointerDownOutside={keepOpen}
+        onInteractOutside={keepOpen}
+        // Radix returns focus to whatever opened the dialog, but the Save
+        // button that did is gone once nothing is left to save. Fall back to
+        // the page, so keyboard users land where they were rather than at
+        // the top of the window.
+        onCloseAutoFocus={(e) => {
+          e.preventDefault()
+          returnFocus?.()
+        }}
+        aria-busy={working}
+      >
+        <DialogHeader>
+          <DialogTitle>{copy.title}</DialogTitle>
+          <DialogDescription>{copy.body}</DialogDescription>
+          {copy.detail && (
+            <p className="selectable mt-1 rounded-[12px] bg-live/8 px-3.5 py-2.5 text-[13.5px] leading-snug text-live">
+              {copy.detail}
+            </p>
+          )}
+        </DialogHeader>
+
+        {op && (
+          <ol className="mt-6 flex flex-col gap-3 rounded-[16px] bg-cream px-4 py-3.5" aria-live="polite">
+            {op.steps.map((step) => (
+              <li key={step.id} className="flex items-center gap-3 text-[14.5px]">
+                <span className="grid h-5 w-5 place-items-center">
+                  <StepIcon status={step.status} />
+                </span>
+                <span className={step.status === 'pending' ? 'text-faint' : 'text-ink'}>{step.label}</span>
+                <span className="sr-only">
+                  {{ pending: 'waiting', working: 'in progress', done: 'done', failed: 'failed' }[step.status]}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+
+        {!working && (
+          <DialogFooter>
+            {phase === 'done' && (
+              <Button variant="primary" onClick={onClose} autoFocus>
+                Done
+              </Button>
+            )}
+            {phase === 'error' && (
+              <Button variant="primary" onClick={onRetry} autoFocus>
+                Try again
+              </Button>
+            )}
+            {phase === 'partial' && (
+              <Button variant="primary" onClick={onRetryRestart} autoFocus>
+                Try restart again
+              </Button>
+            )}
+            {phase !== 'done' && (
+              <Button variant="ghost" onClick={onClose}>
+                Close
+              </Button>
+            )}
+          </DialogFooter>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+const labelOf = (map, v) => {
+  const l = map[v]
+  return (typeof l === 'object' ? l.label : l) || String(v)
+}
+const onOff = (v) => (v ? 'On' : 'Off')
+
+// Every setting the page edits, by the name its row uses, with how to say
+// its value. The order is the page's order.
+const DESCRIBE = [
+  ['display_name', 'Display name', (v) => v || 'Your system name'],
+  ['hotkey', 'Hotkey', (v) => labelOf(HOTKEY_LABELS, v)],
+  ['activation', 'Activation', (v) => labelOf(ACTIVATION_LABELS, v)],
+  ['stt_backend', 'Transcribe with', (v) => labelOf(BACKEND_LABELS, v)],
+  ['hinglish', 'Language', (v) => (v ? 'English + Hinglish' : 'English')],
+  ['beam_size', 'Accuracy', (v) => labelOf(BEAM_LABELS, v)],
+  ['insert_method', 'Insert text by', (v) => labelOf(INSERT_LABELS, v)],
+  ['model_override', 'Local model', (v, ctx) => v || `${ctx.recommended} (recommended)`],
+  ['compute_type', 'Compute type', String],
+  ['cleanup_enabled', 'Clean up transcripts', onOff],
+  ['cleanup_scope', 'Apply to', (v) => labelOf(SCOPE_LABELS, v)],
+  ['cleanup_strength', 'Correction level', (v) => labelOf(STRENGTH_LABELS, v)],
+  ['cleanup_model', 'Cleanup model', (v) => labelOf(CLEANUP_MODEL_LABELS, v)],
+  ['cleanup_reasoning', 'Reasoning', (v) => labelOf(REASONING_LABELS, v)],
+  ['line_breaks', 'Break long text into paragraphs', onOff],
+]
+
+function describeChanges(initial, cfg, keys, ctx) {
+  const rows = DESCRIBE.filter(([k]) => initial[k] !== cfg[k]).map(([k, label, say]) => ({
+    label,
+    from: say(initial[k], ctx),
+    to: say(cfg[k], ctx),
+  }))
+  for (const [value, label] of [
+    [keys.openai, 'OpenAI API key'],
+    [keys.elevenlabs, 'ElevenLabs API key'],
+  ]) {
+    if (value === '') rows.push({ label, to: 'Will be removed' })
+    else if (value) rows.push({ label, to: 'New key entered' })
+  }
+  return rows
+}
+
+/**
+ * Unsaved changes, asked about in the middle of the window.
+ *
+ * Opens after a change (a pick in a menu or a switch at once; a text field
+ * when you leave it, not on every keystroke). It lists exactly what changed
+ * and warns when saving restarts the daemon. Keep editing closes it so you
+ * can change several things; the next change brings it back with all of them.
+ */
+function UnsavedDialog({ open, onOpenChange, changes, needsRestart, onSave, onDiscard }) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {needsRestart ? 'Save and restart the daemon?' : 'Save your changes?'}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {needsRestart
+              ? 'Some of these only take effect after the daemon restarts. Dictation pauses for a moment while it does.'
+              : 'They take effect from your next dictation.'}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+
+        <ul className="mt-5 max-h-[220px] divide-y divide-line overflow-y-auto rounded-[16px] bg-cream px-4">
+          {changes.map((c) => (
+            <li key={c.label} className="flex items-baseline justify-between gap-4 py-2.5 text-[14px]">
+              <span className="shrink-0 text-muted">{c.label}</span>
+              <span className="min-w-0 text-right">
+                {c.from !== undefined && (
+                  <>
+                    <span className="text-faint line-through decoration-faint/60">{c.from}</span>
+                    <span className="mx-1.5 text-faint" aria-label="changed to">→</span>
+                  </>
+                )}
+                <span className="font-medium text-ink">{c.to}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        <AlertDialogFooter className="justify-between">
+          <Button variant="ghost" className="-ml-3 text-live hover:bg-live/8 hover:text-live" onClick={onDiscard}>
+            Discard
+          </Button>
+          <div className="flex gap-2">
+            <AlertDialogCancel asChild>
+              <Button>Keep editing</Button>
+            </AlertDialogCancel>
+            <AlertDialogAction asChild>
+              <Button variant="primary" onClick={onSave}>
+                {needsRestart ? 'Save and restart' : 'Save changes'}
+              </Button>
+            </AlertDialogAction>
+          </div>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
 }
 
 const opts = (values, labels) =>
-  values.map((v) => ({ value: v, label: labels?.[v] || v }))
+  values.map((v) => {
+    const l = labels?.[v]
+    return typeof l === 'object' ? { value: v, ...l } : { value: v, label: l || v }
+  })
 
 /**
  * A key box with its own Test button.
@@ -48,7 +354,7 @@ const opts = (values, labels) =>
  * checked before committing to it — and neither probe costs anything, because
  * both hit a listing endpoint rather than doing real work.
  */
-function KeyField({ label, hint, provider, status, value, onChange, placeholder }) {
+function KeyField({ label, hint, provider, status, value, onChange, onCommit, placeholder }) {
   const [result, setResult] = useState(null)
   const [testing, setTesting] = useState(false)
   // value is null while the saved key is untouched, '' once it is marked for
@@ -74,7 +380,7 @@ function KeyField({ label, hint, provider, status, value, onChange, placeholder 
       label={label}
       hint={
         result ? (
-          <span className={result.ok ? 'text-good-500' : 'text-live-500'}>
+          <span className={result.ok ? 'text-good' : 'text-live'}>
             {result.ok ? '✓ ' : '✗ '}
             {result.message}
           </span>
@@ -85,7 +391,12 @@ function KeyField({ label, hint, provider, status, value, onChange, placeholder 
         )
       }
     >
-      <div className="flex gap-2">
+      {/* Done with the field = focus leaves the whole row, so moving from the
+          key box to its own Test button doesn't count. */}
+      <div
+        className="flex gap-2"
+        onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && onCommit?.(e)}
+      >
         <TextInput
           type="password"
           value={typed}
@@ -102,7 +413,14 @@ function KeyField({ label, hint, provider, status, value, onChange, placeholder 
           {testing ? '…' : 'Test'}
         </Button>
         {status?.set && !status.fromEnv && !typed && (
-          <Button size="md" variant="ghost" onClick={() => onChange(removing ? null : '')}>
+          <Button
+            size="md"
+            variant="ghost"
+            onClick={() => {
+              onChange(removing ? null : '')
+              onCommit?.()
+            }}
+          >
             {removing ? 'Keep' : 'Remove'}
           </Button>
         )}
@@ -111,7 +429,7 @@ function KeyField({ label, hint, provider, status, value, onChange, placeholder 
   )
 }
 
-export default function Settings() {
+export default function Settings({ setGuard }) {
   const [initial, setInitial] = useState(null)
   const [cfg, setCfg] = useState(null)
   const [choices, setChoices] = useState({})
@@ -122,11 +440,34 @@ export default function Settings() {
   const [openaiKey, setOpenaiKey] = useState(null)
   const [sttKey, setSttKey] = useState(null)
   const [loadError, setLoadError] = useState('')
-  const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
-  // Both toast sites share one timer, so a restart toast can't be cleared
-  // early by a save toast's leftover timeout.
-  const clearToastLater = useTimer()
+  // The save/restart dialog: { kind, restart, steps, outcome, error } or null.
+  const [op, setOp] = useState(null)
+  const pageRef = useRef(null)
+  // The unsaved-changes dialog. askTick counts finished edits; each one opens
+  // the dialog if anything is actually unsaved (picking the current value, or
+  // changing something back, doesn't).
+  const [asking, setAsking] = useState(false)
+  const [askTick, setAskTick] = useState(0)
+  const ask = () => setAskTick((t) => t + 1)
+  // Leaving a text field counts as finishing it, with two exceptions: focus
+  // going outside the page (the sidebar's leave-without-saving check covers
+  // that, and two dialogs at once would be one too many), and the window
+  // itself losing focus (alt-tabbing to copy a key isn't "done").
+  const askOnLeave = (e) => {
+    const to = e?.relatedTarget
+    if (to && !pageRef.current?.contains(to)) return
+    setTimeout(() => document.hasFocus() && ask(), 0)
+  }
+  const openerRef = useRef(null)
+  const startOp = (next) => {
+    if (!op) openerRef.current = document.activeElement
+    setOp(next)
+  }
+  const returnFocus = () => {
+    const el = openerRef.current
+    ;(el && el.isConnected ? el : pageRef.current)?.focus({ preventScroll: true })
+  }
 
   const load = () =>
     window.baatsun
@@ -165,58 +506,125 @@ export default function Settings() {
     [initial, cfg, sttKey],
   )
 
+  // Tell the app shell whether leaving this page would lose anything.
+  const dirtyRef = useRef(false)
+  dirtyRef.current = !!dirty
+  useEffect(() => {
+    setGuard?.(() => dirtyRef.current)
+    return () => setGuard?.(null)
+  }, [])
+
+  // Open once a menu that made the change has finished closing (its 120ms
+  // exit). Otherwise the menu hands focus back to its trigger after the
+  // dialog has taken it, and keyboard focus ends up behind the dialog.
+  useEffect(() => {
+    if (!askTick) return
+    const t = setTimeout(() => dirtyRef.current && setAsking(true), 160)
+    return () => clearTimeout(t)
+  }, [askTick])
+
   if (!cfg) {
     return (
-      <p className="text-[13px] text-ink-500">
+      <p className="text-[14px] text-faint">
         {loadError ? `Could not load settings: ${loadError}` : 'Loading settings…'}
       </p>
     )
   }
 
   const set = (key) => (value) => setCfg((prev) => ({ ...prev, [key]: value }))
+  // For menus and switches: the change is complete the moment it's made.
+  const pick = (key) => (value) => {
+    set(key)(value)
+    ask()
+  }
+  const discard = () => {
+    setCfg(initial)
+    setOpenaiKey(null)
+    setSttKey(null)
+    setAsking(false)
+  }
+
+  const mark = (id, status) =>
+    setOp((o) => o && { ...o, steps: o.steps.map((st) => (st.id === id ? { ...st, status } : st)) })
+  const finish = (outcome, error = '') => setOp((o) => o && { ...o, outcome, error })
+
+  const restartStep = async () => {
+    mark('restart', 'working')
+    try {
+      await atLeast(window.baatsun.restartDaemon())
+      mark('restart', 'done')
+      return true
+    } catch (err) {
+      mark('restart', 'failed')
+      return err.message
+    }
+  }
 
   const save = async () => {
+    const restart = needsRestart
+    startOp({
+      kind: 'save',
+      restart,
+      outcome: null,
+      error: '',
+      steps: [
+        { id: 'save', label: 'Save settings', status: 'working' },
+        ...(restart ? [{ id: 'restart', label: 'Restart the daemon', status: 'pending' }] : []),
+      ],
+    })
     setSaving(true)
     try {
       try {
-        await window.baatsun.saveConfig({
-          config: cfg,
-          openaiKey: openaiKey === null ? undefined : openaiKey,
-          sttKey: sttKey === null ? undefined : sttKey,
-        })
+        await atLeast(
+          window.baatsun.saveConfig({
+            config: cfg,
+            openaiKey: openaiKey === null ? undefined : openaiKey,
+            sttKey: sttKey === null ? undefined : sttKey,
+          }),
+        )
       } catch (err) {
-        setToast(`Could not save: ${err.message}`)
+        mark('save', 'failed')
+        finish('error', err.message)
         return
       }
       // Saved from here on, whatever the restart does.
-      const restart = needsRestart
+      mark('save', 'done')
       await load()
+      // The sidebar shows the hotkey and activation; tell it they may have changed.
+      window.dispatchEvent(new Event('baatsun:config-saved'))
       if (restart) {
-        try {
-          await window.baatsun.restartDaemon()
-          setToast('Saved — daemon restarted')
-        } catch (err) {
-          setToast(`Saved, but the daemon did not restart: ${err.message}`)
-        }
-      } else {
-        setToast('Saved — in effect from your next dictation')
+        const ok = await restartStep()
+        if (ok !== true) return finish('partial', ok)
       }
+      finish('done')
     } finally {
       setSaving(false)
-      clearToastLater(() => setToast(''), 4000)
     }
+  }
+
+  const restartOnly = async () => {
+    startOp({
+      kind: 'restart',
+      restart: true,
+      outcome: null,
+      error: '',
+      steps: [{ id: 'restart', label: 'Restart the daemon', status: 'pending' }],
+    })
+    const ok = await restartStep()
+    finish(ok === true ? 'done' : 'error', ok === true ? '' : ok)
   }
 
   const cloud = cfg.stt_backend === 'elevenlabs'
 
   return (
-    <div className="mx-auto max-w-[760px] pb-24">
+    <div ref={pageRef} tabIndex={-1} className="mx-auto max-w-[760px] pb-6 outline-none">
       <Section title="Profile">
         <Card>
           <Field label="Display name" hint="What the Home page greets you by">
             <TextInput
               value={cfg.display_name}
               onChange={(e) => set('display_name')(e.target.value)}
+              onBlur={askOnLeave}
               placeholder="Leave empty to use your system name"
               className="w-[230px]"
             />
@@ -229,7 +637,7 @@ export default function Settings() {
           <Field label="Hotkey" hint="Read below the compositor, so it works everywhere">
             <Select
               value={cfg.hotkey}
-              onChange={set('hotkey')}
+              onChange={pick('hotkey')}
               options={opts(choices.hotkey || [], HOTKEY_LABELS)}
             />
           </Field>
@@ -239,7 +647,7 @@ export default function Settings() {
           >
             <Select
               value={cfg.activation}
-              onChange={set('activation')}
+              onChange={pick('activation')}
               options={opts(choices.activation || [], ACTIVATION_LABELS)}
             />
           </Field>
@@ -261,7 +669,7 @@ export default function Settings() {
           >
             <Select
               value={cfg.stt_backend}
-              onChange={set('stt_backend')}
+              onChange={pick('stt_backend')}
               options={opts(choices.stt_backend || [], BACKEND_LABELS)}
             />
           </Field>
@@ -274,6 +682,7 @@ export default function Settings() {
               status={keys.elevenlabs}
               value={sttKey}
               onChange={setSttKey}
+              onCommit={askOnLeave}
               placeholder="sk_…"
             />
           )}
@@ -288,10 +697,14 @@ export default function Settings() {
           >
             <Select
               value={cfg.hinglish ? 'hinglish' : 'en'}
-              onChange={(v) => set('hinglish')(v === 'hinglish')}
+              onChange={(v) => pick('hinglish')(v === 'hinglish')}
               options={[
-                { value: 'en', label: 'English' },
-                { value: 'hinglish', label: 'English + Hinglish' },
+                { value: 'en', label: 'English', hint: 'English-only model, the fastest' },
+                {
+                  value: 'hinglish',
+                  label: 'English + Hinglish',
+                  hint: 'Hears Hindi and Urdu words; the output stays English',
+                },
               ]}
             />
           </Field>
@@ -300,10 +713,10 @@ export default function Settings() {
             <Field label="Accuracy" hint="More accurate settings take a little longer per dictation">
               <Select
                 value={String(cfg.beam_size)}
-                onChange={(v) => set('beam_size')(Number(v))}
+                onChange={(v) => pick('beam_size')(Number(v))}
                 options={(choices.beam_size || [1, 3, 5]).map((v) => ({
                   value: String(v),
-                  label: BEAM_LABELS[v] || String(v),
+                  ...(BEAM_LABELS[v] || { label: String(v) }),
                 }))}
               />
             </Field>
@@ -312,7 +725,7 @@ export default function Settings() {
           <Field label="Insert text by" hint="Paste also works for any script and any length">
             <Select
               value={cfg.insert_method}
-              onChange={set('insert_method')}
+              onChange={pick('insert_method')}
               options={opts(choices.insert_method || [], INSERT_LABELS)}
             />
           </Field>
@@ -327,11 +740,12 @@ export default function Settings() {
           >
             <Select
               value={cfg.model_override || ''}
-              onChange={set('model_override')}
+              onChange={pick('model_override')}
               options={[
                 {
                   value: '',
                   label: `${cfg.hinglish ? multilingualModel : defaultModel} (recommended)`,
+                  hint: 'Picked for the language you set above',
                 },
                 ...opts(choices.model || []),
               ]}
@@ -340,14 +754,14 @@ export default function Settings() {
           <Field label="Compute type">
             <Select
               value={cfg.compute_type}
-              onChange={set('compute_type')}
+              onChange={pick('compute_type')}
               options={opts(choices.compute_type || [])}
             />
           </Field>
         </Card>
 
         {cloud && (
-          <p className="mt-2.5 flex items-start gap-2 text-[12.5px] leading-relaxed text-ink-400">
+          <p className="mt-2.5 flex items-start gap-2 text-[13.5px] leading-relaxed text-muted">
             <Badge tone="accent">note</Badge>
             <span>
               Your audio leaves this machine while this is selected. Roughly $0.27 per hour
@@ -365,7 +779,7 @@ export default function Settings() {
           <Field label="Clean up transcripts" hint="Off until an API key is saved below">
             <Toggle
               checked={cfg.cleanup_enabled}
-              onChange={set('cleanup_enabled')}
+              onChange={pick('cleanup_enabled')}
               label="Clean up transcripts"
             />
           </Field>
@@ -375,7 +789,7 @@ export default function Settings() {
               <Field label="Apply to" hint="Prose only: terminals and editors stay verbatim">
                 <Select
                   value={cfg.cleanup_scope}
-                  onChange={set('cleanup_scope')}
+                  onChange={pick('cleanup_scope')}
                   options={opts(choices.cleanup_scope || [], SCOPE_LABELS)}
                 />
               </Field>
@@ -385,24 +799,36 @@ export default function Settings() {
               >
                 <Select
                   value={cfg.cleanup_strength}
-                  onChange={set('cleanup_strength')}
+                  onChange={pick('cleanup_strength')}
                   options={opts(choices.cleanup_strength || [], STRENGTH_LABELS)}
                 />
               </Field>
-              <Field label="Model">
+              <Field label="Model" hint="Only the transcript text is sent to OpenAI">
                 <Select
                   value={cfg.cleanup_model}
-                  onChange={set('cleanup_model')}
-                  options={opts(choices.cleanup_model || [])}
+                  onChange={pick('cleanup_model')}
+                  options={opts(choices.cleanup_model || [], CLEANUP_MODEL_LABELS)}
                 />
               </Field>
+              {isReasoningModel(cfg.cleanup_model) && (
+                <Field
+                  label="Reasoning"
+                  hint="How much the model thinks before correcting. Higher is slower, and the thinking is billed"
+                >
+                  <Select
+                    value={cfg.cleanup_reasoning || 'low'}
+                    onChange={pick('cleanup_reasoning')}
+                    options={opts(choices.cleanup_reasoning || ['none', 'low', 'medium', 'high'], REASONING_LABELS)}
+                  />
+                </Field>
+              )}
               <Field
                 label="Break long text into paragraphs"
                 hint="Never in chat apps, where Enter would send the message"
               >
                 <Toggle
                   checked={cfg.line_breaks}
-                  onChange={set('line_breaks')}
+                  onChange={pick('line_breaks')}
                   label="Break long text into paragraphs"
                 />
               </Field>
@@ -413,6 +839,7 @@ export default function Settings() {
                 status={keys.openai}
                 value={openaiKey}
                 onChange={setOpenaiKey}
+                onCommit={askOnLeave}
                 placeholder="sk-…"
               />
             </>
@@ -423,55 +850,37 @@ export default function Settings() {
       <Section title="Daemon">
         <Card>
           <Field label="baatsun.service" hint="Restart if dictation stops responding">
-            <Button
-              onClick={async () => {
-                try {
-                  await window.baatsun.restartDaemon()
-                  setToast('Daemon restarted')
-                } catch (err) {
-                  setToast(err.message)
-                }
-                clearToastLater(() => setToast(''), 4000)
-              }}
-            >
-              Restart
-            </Button>
+            <Button onClick={restartOnly}>Restart</Button>
           </Field>
         </Card>
       </Section>
 
-      {/* Pinned rather than inline: Settings is longer than the window, and a
-          save button that scrolls out of reach is a save button people miss. */}
-      {(dirty || toast) && (
-        <div className="animate-rise fixed bottom-0 left-[196px] right-0 border-t border-ink-700/60 bg-ink-900/95 px-8 py-3 backdrop-blur">
-          <div className="mx-auto flex max-w-[760px] items-center justify-between gap-4">
-            <p className="text-[12.5px] text-ink-400">
-              {toast ||
-                (needsRestart
-                  ? 'Saving will restart the daemon — dictation pauses for a moment.'
-                  : 'Unsaved changes')}
-            </p>
-            {dirty && (
-              <div className="flex gap-2">
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setCfg(initial)
-                    setOpenaiKey(null)
-                    setSttKey(null)
-                  }}
-                  disabled={saving}
-                >
-                  Discard
-                </Button>
-                <Button variant="primary" onClick={save} disabled={saving}>
-                  {saving ? 'Saving…' : 'Save changes'}
-                </Button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <UnsavedDialog
+        open={asking && !!dirty}
+        onOpenChange={setAsking}
+        changes={
+          dirty
+            ? describeChanges(initial, cfg, { openai: openaiKey, elevenlabs: sttKey }, {
+                recommended: cfg.hinglish ? multilingualModel : defaultModel,
+              })
+            : []
+        }
+        needsRestart={needsRestart}
+        onSave={save}
+        onDiscard={discard}
+      />
+
+      <OperationDialog
+        op={op}
+        returnFocus={returnFocus}
+        onClose={() => setOp(null)}
+        onRetry={() => (op?.kind === 'restart' ? restartOnly() : save())}
+        onRetryRestart={async () => {
+          setOp((o) => o && { ...o, outcome: null, error: '' })
+          const ok = await restartStep()
+          finish(ok === true ? 'done' : 'partial', ok === true ? '' : ok)
+        }}
+      />
     </div>
   )
 }

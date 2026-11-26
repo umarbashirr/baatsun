@@ -59,9 +59,9 @@ function Orb({ state, onToggle, disabled }) {
     >
       {recording && (
         <>
-          <span className="animate-live absolute inset-0 rounded-full bg-live-500/10" />
+          <span className="animate-live absolute inset-0 rounded-full bg-live/8" />
           <span
-            className="animate-live absolute inset-[14px] rounded-full bg-live-500/15"
+            className="animate-live absolute inset-[14px] rounded-full bg-live/12"
             style={{ animationDelay: '0.3s' }}
           />
         </>
@@ -69,14 +69,14 @@ function Orb({ state, onToggle, disabled }) {
       <span
         className={`relative grid h-[92px] w-[92px] place-items-center rounded-full border transition-all duration-300 ${
           recording
-            ? 'border-live-500/50 bg-live-500/15 scale-105'
+            ? 'border-live/50 bg-live/12 scale-105'
             : transcribing
-              ? 'border-saffron-500/50 bg-saffron-500/12'
-              : 'border-ink-600 bg-ink-800 group-hover:border-ink-500 group-hover:bg-ink-750'
+              ? 'border-green/40 bg-mint'
+              : 'border-sand-2 bg-sand group-hover:border-sand-2 group-hover:bg-sand'
         }`}
       >
         {transcribing ? (
-          <svg className="h-7 w-7 animate-spin text-saffron-400" viewBox="0 0 24 24" fill="none">
+          <svg className="h-7 w-7 animate-spin text-green" viewBox="0 0 24 24" fill="none">
             <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.2" />
             <path
               d="M21 12a9 9 0 0 0-9-9"
@@ -87,7 +87,7 @@ function Orb({ state, onToggle, disabled }) {
           </svg>
         ) : (
           <svg
-            className={`h-8 w-8 transition-colors ${recording ? 'text-live-500' : 'text-ink-300'}`}
+            className={`h-8 w-8 transition-colors ${recording ? 'text-live' : 'text-muted'}`}
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -152,18 +152,18 @@ export default function Dictate({ daemon }) {
       <div className="flex flex-col items-center py-6">
         <Orb state={current} onToggle={toggle} disabled={busy || !daemon.connected} />
 
-        <h2 className="mt-6 text-[19px] font-semibold tracking-tight text-ink-50">
+        <h2 className="mt-6 font-serif text-[34px] leading-tight text-ink">
           {copy.title}
         </h2>
-        <p className="mt-1.5 text-center text-[13.5px] text-ink-400">{copy.body}</p>
+        <p className="mt-1.5 text-center text-[14.5px] text-muted">{copy.body}</p>
 
         {reason && (
-          <p className="mt-3 text-[12.5px] text-ink-500">{reason}</p>
+          <p className="mt-3 text-[13.5px] text-faint">{reason}</p>
         )}
-        {error && <p className="mt-3 text-[12.5px] text-live-500">{error}</p>}
+        {error && <p className="mt-3 text-[13.5px] text-live">{error}</p>}
 
         <Button
-          variant={current === 'listening' ? 'danger' : 'default'}
+          variant={current === 'listening' ? 'danger' : 'primary'}
           size="md"
           className="mt-5"
           onClick={toggle}
@@ -178,10 +178,10 @@ export default function Dictate({ daemon }) {
           {daemon.focus.app ? (
             <>
               <div className="min-w-0">
-                <p className="text-[13.5px] font-medium text-ink-100">
+                <p className="text-[14.5px] font-medium text-ink">
                   {prettyApp(daemon.focus.app)}
                 </p>
-                <p className="truncate text-[12.5px] text-ink-400" title={daemon.focus.title}>
+                <p className="truncate text-[13.5px] text-muted" title={daemon.focus.title}>
                   {daemon.focus.title || 'No window title'}
                 </p>
               </div>
@@ -198,7 +198,7 @@ export default function Dictate({ daemon }) {
               )}
             </>
           ) : (
-            <p className="text-[13px] text-ink-400">
+            <p className="text-[14px] text-muted">
               No focused window reported yet — it updates as you switch windows.
             </p>
           )}
@@ -215,15 +215,15 @@ export default function Dictate({ daemon }) {
           }
         >
           <Card className="px-4 py-3.5">
-            <p className="selectable text-[13.5px] leading-relaxed text-ink-200">
+            <p className="selectable text-[14.5px] leading-relaxed text-ink">
               {latest.text}
             </p>
             {latest.raw && (
-              <details className="mt-3 border-t border-ink-700/60 pt-2.5">
-                <summary className="cursor-pointer text-[12px] text-ink-500 hover:text-ink-300">
+              <details className="mt-3 border-t border-line pt-2.5">
+                <summary className="cursor-pointer text-[13px] text-faint hover:text-muted">
                   Before cleanup
                 </summary>
-                <p className="selectable mt-2 text-[12.5px] leading-relaxed text-ink-400">
+                <p className="selectable mt-2 text-[13.5px] leading-relaxed text-muted">
                   {latest.raw}
                 </p>
               </details>
