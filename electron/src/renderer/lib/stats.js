@@ -54,6 +54,13 @@ export function computeStats(entries, cleanupModel = 'gpt-6-luna') {
 
   let words = 0
   let cleaned = 0
+  // Words this week and the week before, by rolling 7-day windows.
+  const nowSecs = Date.now() / 1000
+  let weekWords = 0
+  let lastWeekWords = 0
+  let weekSecs = 0
+  const perSurface = new Map()
+  const perMode = new Map()
   let spokenSecs = 0
   let spend = 0
   let spendEstimated = false
@@ -88,7 +95,17 @@ export function computeStats(entries, cleanupModel = 'gpt-6-luna') {
       spendEstimated = true
     }
 
+    if (entry.surface) perSurface.set(entry.surface, (perSurface.get(entry.surface) || 0) + 1)
+    if (entry.mode) perMode.set(entry.mode, (perMode.get(entry.mode) || 0) + 1)
+
     if (typeof entry.ts !== 'number') continue
+    const age = nowSecs - entry.ts
+    if (age < 7 * 86400) {
+      weekWords += count
+      weekSecs += entry.secs || (count / SPEAKING_WPM) * 60
+    } else if (age < 14 * 86400) {
+      lastWeekWords += count
+    }
     const day = new Date(entry.ts * 1000)
     day.setHours(0, 0, 0, 0)
     const key = dayKey(day)
@@ -118,6 +135,12 @@ export function computeStats(entries, cleanupModel = 'gpt-6-luna') {
     spend,
     spendEstimated,
     topApps: [...perApp.entries()].sort((a, b) => b[1] - a[1]),
+    weekWords,
+    lastWeekWords,
+    // Speaking pace this week, from the real recording durations.
+    weekWpm: weekSecs > 0 ? Math.round(weekWords / (weekSecs / 60)) : 0,
+    topSurfaces: [...perSurface.entries()].sort((a, b) => b[1] - a[1]),
+    modes: Object.fromEntries(perMode),
     activity: [...counts.values()],
   }
 }

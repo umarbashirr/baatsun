@@ -27,6 +27,8 @@ import time
 KEY_LEFTCTRL = 29
 KEY_LEFTSHIFT = 42
 KEY_ENTER = 28
+KEY_BACKSPACE = 14
+KEY_C = 46
 KEY_V = 47
 
 # Short, but not zero: some toolkits drop characters when keys arrive with no
@@ -165,12 +167,76 @@ def _copy(copy_argv, text):
     return True, ""
 
 
-def paste(text, app=None):
+def _press_copy(terminal):
+    if ydotool_major() >= 1:
+        mods = [KEY_LEFTCTRL] + ([KEY_LEFTSHIFT] if terminal else [])
+        keys = [f"{k}:1" for k in mods] + [f"{KEY_C}:1", f"{KEY_C}:0"]
+        keys += [f"{k}:0" for k in reversed(mods)]
+        return _run(["ydotool", "key", *keys])
+    return _run(["ydotool", "key", "ctrl+shift+c" if terminal else "ctrl+c"])
+
+
+# Put on the clipboard before pressing copy, so "nothing was selected" can be
+# told apart from "the selection happens to equal what was already copied".
+_SENTINEL = "\u2063baatsun-no-selection\u2063"
+
+
+def copy_selection(app=None):
+    """The text currently selected in the focused window, or None.
+
+    Returns (selection or None, the clipboard as it was before, or None).
+    The caller hands that second value to paste(restore=...) so a voice edit
+    leaves your clipboard as it found it.
+    """
+    tools = _clipboard_tools()
+    if tools is None:
+        return None, None
+    copy_argv, read_argv = tools
+    if not read_argv:
+        return None, None
+    previous = _read_clipboard(read_argv)
+    ok, _err = _copy(copy_argv, _SENTINEL)
+    if not ok:
+        return None, previous
+    time.sleep(0.05)
+    ok, _err = _press_copy(is_terminal(app))
+    if not ok:
+        return None, previous
+    # The app answers the copy asynchronously; give it a moment, then look.
+    selection = None
+    for _ in range(6):
+        time.sleep(0.05)
+        current = _read_clipboard(read_argv)
+        if current is not None and current != _SENTINEL:
+            selection = current
+            break
+    if selection is None and previous is not None:
+        _copy(copy_argv, previous)
+    return (selection if selection and selection.strip() else None), previous
+
+
+def delete_chars(count):
+    """Press Backspace count times, to take back text we just inserted."""
+    if count <= 0:
+        return True, ""
+    if ydotool_major() >= 1:
+        # Batched, so a long dictation doesn't build one enormous argv.
+        for start in range(0, count, 200):
+            n = min(200, count - start)
+            ok, err = _run(["ydotool", "key", *([f"{KEY_BACKSPACE}:1", f"{KEY_BACKSPACE}:0"] * n)])
+            if not ok:
+                return ok, err
+        return True, ""
+    return _run(["ydotool", "key", "--key-delay", "2", "--repeat", str(count), "backspace"],
+                timeout=120)
+
+
+def paste(text, app=None, restore=None):
     tools = _clipboard_tools()
     if tools is None:
         return False, "no clipboard tool (install wl-clipboard, or xclip on X11)"
     copy_argv, read_argv = tools
-    previous = _read_clipboard(read_argv)
+    previous = restore if restore is not None else _read_clipboard(read_argv)
     ok, err = _copy(copy_argv, text)
     if not ok:
         return False, err
@@ -222,7 +288,8 @@ def type_soft(text):
     return True, ""
 
 
-def insert(text, app=None, method="paste", log=None, soft_newlines=False):
+def insert(text, app=None, method="paste", log=None, soft_newlines=False,
+           restore=None):
     """Insert text into the focused window. Returns (ok, how or error).
 
     soft_newlines: line breaks must not arrive as Enter (terminals, editors).
@@ -235,7 +302,7 @@ def insert(text, app=None, method="paste", log=None, soft_newlines=False):
         return True, "nothing"
     multiline = "\n" in text
     if method != "type" or (soft_newlines and multiline and is_terminal(app)):
-        ok, err = paste(text, app)
+        ok, err = paste(text, app, restore=restore)
         if ok:
             return True, "pasted"
         if log:

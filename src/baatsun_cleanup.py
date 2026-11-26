@@ -63,6 +63,7 @@ Return the speaker's own words with only these fixes:
 5. Fix words the transcriber obviously misheard, when context makes the intended word certain (homophones, split or merged words, mangled technical terms such as "react j s" -> "React.js", "get hub" -> "GitHub"). Also when a word or phrase is nonsense as written but a similar-sounding phrase obviously fits the sentence, write that phrase: "so kindly ground mainly for one day" -> "so kindly grant me leave for one day", "allow me a link for one day" -> "allow me leave for one day".
 6. Write clearly spoken numbers, dates, prices, emails and URLs in normal written form ("twenty five dollars" -> "$25", "john at gmail dot com" -> "john@gmail.com").
 7. Fix clear grammar slips only (a missing article, a wrong verb ending). Do not "improve" grammar that is merely informal.
+8. Apply spoken layout commands instead of writing them out, when they are clearly said as instructions: "new line" -> a line break, "new paragraph" -> a blank line, "bullet point" / "next bullet" -> start a "- " list item, "number one", "number two" in a spoken list -> "1." "2.". If such words are part of a sentence ("the new line of products"), keep them as words.
 
 Hard rules:
 - Keep the speaker's vocabulary, word order, sentence structure, tone and point of view (I/we/you/they). Do NOT paraphrase, use synonyms, reorder clauses, merge or split ideas, summarize, shorten, expand, or make it more formal or polished.
@@ -228,6 +229,21 @@ LINE_BREAK_LINE = (
 LINE_BREAK_MIN_WORDS = 40
 
 
+LANGUAGE_NAMES = {
+    "en": "English",
+    "hi": "Hindi, written in Devanagari script",
+    "ur": "Urdu, written in Urdu (Nastaliq) script",
+}
+
+TRANSLATE_LINE = (
+    "Finally, write the result in {language}. If the speaker used another "
+    "language, translate it faithfully: keep their meaning, tone, point of "
+    "view, names, numbers and every detail, and keep technical terms and brand "
+    "names as they are. This overrides the rule about keeping their exact "
+    "words, and only that rule."
+)
+
+
 def wants_paragraphs(surface=None):
     """Whether this surface is laid out in paragraphs at all.
 
@@ -238,14 +254,15 @@ def wants_paragraphs(surface=None):
 
 
 def build_system_prompt(vocabulary="", line_breaks=False, hinglish=False,
-                       strength=GRAMMAR, surface=None):
+                       strength=GRAMMAR, surface=None, output_language=None):
     # The core is a proofreader. "natural" allows a little grammatical
     # smoothing on top; Hinglish adds the one place where words may be
     # replaced: Hindi/Urdu ones, rendered in English.
     prompt = _PROMPT_CORE
     if strength == NATURAL:
         prompt += NATURAL_LINE
-    if hinglish:
+    # A chosen output language replaces Hinglish's "render it in English".
+    if hinglish and output_language not in LANGUAGE_NAMES:
         prompt += HINGLISH_LINE
     if vocabulary:
         prompt += "\n" + VOCABULARY_LINE.format(vocabulary=vocabulary)
@@ -255,6 +272,8 @@ def build_system_prompt(vocabulary="", line_breaks=False, hinglish=False,
         prompt += "\n" + SURFACE_LINES[surface]
     if line_breaks and wants_paragraphs(surface):
         prompt += "\n" + LINE_BREAK_LINE
+    if output_language in LANGUAGE_NAMES:
+        prompt += "\n" + TRANSLATE_LINE.format(language=LANGUAGE_NAMES[output_language])
     return prompt
 
 
@@ -275,7 +294,8 @@ def timeout_for(text, model=None):
 
 def clean(text, api_key, model="gpt-6-luna", log=None, vocabulary="",
           line_breaks=False, hinglish=False, strength=GRAMMAR, usage=None,
-          surface=None, timeout=None, reasoning=DEFAULT_REASONING):
+          surface=None, timeout=None, reasoning=DEFAULT_REASONING,
+          output_language=None):
     """Return the cleaned transcript, or None if it couldn't be produced.
 
     None is not an error the caller needs to handle beyond falling back to the
@@ -288,23 +308,108 @@ def clean(text, api_key, model="gpt-6-luna", log=None, vocabulary="",
     """
     if not text or not api_key:
         return None
+    system = build_system_prompt(
+        vocabulary,
+        line_breaks and len(text.split()) >= LINE_BREAK_MIN_WORDS,
+        hinglish,
+        strength,
+        surface,
+        output_language,
+    )
+    # Cleaned text is about as long as the input; this is a runaway guard,
+    # not a target. 4 tokens per word is generous for English, and Devanagari
+    # or Urdu script takes several times that.
+    per_word = 12 if output_language in ("hi", "ur") else 4
+    cleaned = _complete(system, text, api_key, model, log=log, usage=usage,
+                        timeout=timeout, reasoning=reasoning,
+                        answer_cap=max(256, len(text.split()) * per_word))
+    if not cleaned:
+        return None
+    # A model that decided to explain itself instead of answering would type a
+    # paragraph of apology into whatever you had focused. Length is a crude but
+    # effective guard, and falling back to the raw transcript is always safe.
+    limit = len(text) * (6 if output_language in ("hi", "ur") else 3)
+    if len(cleaned) > max(200, limit):
+        _report(log, "cleanup response implausibly long, using raw transcript")
+        return None
+    return cleaned
 
+
+EDIT_PROMPT = """You edit text on the user's screen by voice. You receive an INSTRUCTION they spoke and, usually, the SELECTED TEXT it applies to.
+
+- With selected text: apply the instruction to it and return the complete replacement text. Change only what the instruction asks for; keep everything else (facts, names, numbers, formatting) as it was.
+- With no selected text: the instruction asks you to write something new ("write a reply saying I'll be late"). Write exactly that, in the speaker's voice, and nothing more.
+- The instruction was transcribed from speech and may contain small mishearings; read it for its intent.
+- Never answer questions about the text, explain, or add notes. Output only the text that should appear on screen: no quotes, no preamble, no markdown fences."""
+
+NOTES_PROMPT = """You turn a long spoken brain-dump into clear written notes.
+
+Output plain text in this shape, leaving out any section that would be empty:
+Summary: one or two sentences.
+
+Key points:
+- one line per distinct point, in the order they came up
+
+Decisions:
+- ...
+
+Action items:
+- who / what / when, exactly as said
+
+Rules: use only what the speaker said. Never invent facts, names, dates, owners or deadlines. Merge repeats, drop filler and false starts, fix obvious mishearings. Keep their terminology. No markdown headings or bold, just the labels above."""
+
+
+def edit(instruction, selection, api_key, model="gpt-6-luna", log=None,
+         surface=None, usage=None, timeout=None, reasoning=DEFAULT_REASONING,
+         output_language=None):
+    """Apply a spoken instruction to selected text, or write new text from it.
+
+    Returns the text to put on screen, or None when there's no usable answer.
+    """
+    if not instruction or not api_key:
+        return None
+    system = EDIT_PROMPT
+    if surface in SURFACE_LINES and surface != baatsun_context.CODE:
+        # Only the layout half matters here; the "don't add a greeting" rules
+        # are about proofreading, and a composed reply may well want one.
+        system += "\nWhere it lands: " + SURFACE_LINES[surface].split(". ")[0] + "."
+    if output_language in LANGUAGE_NAMES:
+        system += f"\nWrite the result in {LANGUAGE_NAMES[output_language]}."
+    user = f"INSTRUCTION: {instruction}"
+    if selection:
+        user += f"\n\nSELECTED TEXT:\n{selection}"
+    words = len((selection or "").split()) + len(instruction.split())
+    return _complete(system, user, api_key, model, log=log, usage=usage,
+                     timeout=timeout, reasoning=reasoning,
+                     answer_cap=max(600, words * 6), temperature=0.3)
+
+
+def notes(text, api_key, model="gpt-6-luna", log=None, usage=None,
+          timeout=None, reasoning=DEFAULT_REASONING, vocabulary="",
+          output_language=None):
+    """Structured notes from a long dictation, or None."""
+    if not text or not api_key:
+        return None
+    system = NOTES_PROMPT
+    if vocabulary:
+        system += "\n" + VOCABULARY_LINE.format(vocabulary=vocabulary)
+    if output_language in LANGUAGE_NAMES:
+        system += f"\nWrite the notes in {LANGUAGE_NAMES[output_language]}."
+    return _complete(system, text, api_key, model, log=log, usage=usage,
+                     timeout=timeout, reasoning=reasoning,
+                     answer_cap=max(400, len(text.split()) * 3))
+
+
+def _complete(system, user, api_key, model, log=None, usage=None, timeout=None,
+              reasoning=DEFAULT_REASONING, answer_cap=256, temperature=0):
+    """One chat completion. Returns the stripped answer, or None on any failure."""
     request_body = {
         "model": model,
         "messages": [
-            {"role": "system", "content": build_system_prompt(
-                vocabulary,
-                line_breaks and len(text.split()) >= LINE_BREAK_MIN_WORDS,
-                hinglish,
-                strength,
-                surface,
-            )},
-            {"role": "user", "content": text},
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
         ],
     }
-    # Cleaned text is about as long as the input; this is a runaway guard,
-    # not a target. 4 tokens per word is generous for English.
-    answer_cap = max(256, len(text.split()) * 4)
     if is_reasoning(model):
         request_body["reasoning_effort"] = (
             reasoning if reasoning in REASONING_EFFORTS else DEFAULT_REASONING)
@@ -313,8 +418,7 @@ def clean(text, api_key, model="gpt-6-luna", log=None, vocabulary="",
         # and an unsupported parameter would fail every call with a 400.
         request_body["max_completion_tokens"] = answer_cap + REASONING_BUDGET
     else:
-        # A correction task, not a creative one: as deterministic as it gets.
-        request_body["temperature"] = 0
+        request_body["temperature"] = temperature
         request_body["max_tokens"] = answer_cap
     payload = json.dumps(request_body).encode()
 
@@ -340,7 +444,7 @@ def clean(text, api_key, model="gpt-6-luna", log=None, vocabulary="",
         if not isinstance(content, str):
             _report(log, "cleanup returned no text, using raw transcript")
             return None
-        cleaned = content.strip()
+        answer = content.strip()
     except urllib.error.HTTPError as exc:
         # Read the body: OpenAI puts the actionable part (bad key, quota, model
         # not found) in there, and without it the journal just says "400".
@@ -358,25 +462,18 @@ def clean(text, api_key, model="gpt-6-luna", log=None, vocabulary="",
         _report(log, f"cleanup returned an unusable response: {exc}")
         return None
     except Exception as exc:  # noqa: BLE001 — e.g. http.client.IncompleteRead
-        # Whatever went wrong, the caller types the raw transcript. Losing a
-        # dictation to an exception type nobody anticipated is the one
-        # outcome this function exists to prevent.
+        # Whatever went wrong, the caller falls back. Losing a dictation to an
+        # exception type nobody anticipated is the one outcome this exists to
+        # prevent.
         _report(log, f"cleanup failed: {type(exc).__name__}: {exc}")
         return None
 
-    if not cleaned:
+    if not answer:
         return None
     # Models like to leave a space before a paragraph break. ydotool types that
     # literally, so it becomes a trailing space at the end of a line — invisible
     # here, but real in the post.
-    cleaned = "\n".join(line.rstrip() for line in cleaned.splitlines()).strip()
-    # A model that decided to explain itself instead of answering would type a
-    # paragraph of apology into whatever you had focused. Length is a crude but
-    # effective guard, and falling back to the raw transcript is always safe.
-    if len(cleaned) > max(200, len(text) * 3):
-        _report(log, "cleanup response implausibly long, using raw transcript")
-        return None
-    return cleaned
+    return "\n".join(line.rstrip() for line in answer.splitlines()).strip()
 
 
 def verify_key(api_key, model="gpt-6-luna"):

@@ -2,6 +2,97 @@ import React, { useMemo, useState } from 'react'
 import { Card, Button, Badge, Empty, TextInput } from '../components/ui.jsx'
 import { groupByDay, prettyApp } from '../lib/stats.js'
 import { useTimer } from '../lib/useTimer.js'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+} from '../components/dialog.jsx'
+
+// Entries that aren't plain dictation, and what their "raw" text was.
+const MODES = {
+  snippet: { badge: 'snippet', raw: 'What you said' },
+  edit: { badge: 'voice edit', raw: 'Instruction' },
+  compose: { badge: 'written by voice', raw: 'Instruction' },
+  notes: { badge: 'notes', raw: 'Transcript' },
+}
+
+/**
+ * Teach a correction: "heard X, meant Y". Saved to config's corrections list,
+ * which the daemon applies to every transcript from the next one on.
+ */
+function FixDialog({ open, heard: initialHeard, onClose }) {
+  const [heard, setHeard] = useState('')
+  const [correct, setCorrect] = useState('')
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  React.useEffect(() => {
+    if (open) {
+      setHeard(initialHeard || '')
+      setCorrect('')
+      setError('')
+    }
+  }, [open, initialHeard])
+
+  const save = async () => {
+    const h = heard.trim()
+    const c = correct.trim()
+    if (!h || !c) return
+    setSaving(true)
+    setError('')
+    try {
+      const { config } = await window.baatsun.loadConfig()
+      const list = Array.isArray(config.corrections) ? config.corrections : []
+      const next = [...list.filter((i) => i.heard.toLowerCase() !== h.toLowerCase()), { heard: h, correct: c }]
+      await window.baatsun.saveConfig({ config: { corrections: next } })
+      onClose()
+    } catch (err) {
+      setError(err.message || String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Fix a misheard word</DialogTitle>
+          <DialogDescription>
+            From your next dictation on, Baatsun replaces this wherever it’s heard. Manage these on the Words page.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="mt-5 flex flex-col gap-3">
+          <label className="flex flex-col gap-1.5 text-[13.5px] font-medium text-muted">
+            It was heard as
+            <TextInput value={heard} onChange={(e) => setHeard(e.target.value)} placeholder="ground mainly" />
+          </label>
+          <label className="flex flex-col gap-1.5 text-[13.5px] font-medium text-muted">
+            It should be
+            <TextInput
+              autoFocus
+              value={correct}
+              onChange={(e) => setCorrect(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && save()}
+              placeholder="grant me leave"
+            />
+          </label>
+          {error && <p className="text-[13px] text-live">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="primary" onClick={save} disabled={saving || !heard.trim() || !correct.trim()}>
+            Save correction
+          </Button>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 const FILTERS = [
   { id: 'all', label: 'All' },
@@ -16,9 +107,11 @@ function timeOf(ts) {
   })
 }
 
-function Entry({ entry, onRetype, onDelete }) {
+function Entry({ entry, onRetype, onDelete, onFix }) {
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState('')
+  const textRef = React.useRef(null)
+  const fixRef = React.useRef('')
   // Rows unmount on every keystroke in the search box, so this timer outlives
   // its component more often than not.
   const clearLater = useTimer()
@@ -47,7 +140,11 @@ function Entry({ entry, onRetype, onDelete }) {
         <span className="tabular-nums">{timeOf(entry.ts)}</span>
         {entry.app && <span className="text-faint">·</span>}
         {entry.app && <span>{prettyApp(entry.app)}</span>}
-        {entry.raw && <Badge tone="accent">cleaned</Badge>}
+        {MODES[entry.mode] ? (
+          <Badge tone="accent">{MODES[entry.mode].badge}</Badge>
+        ) : (
+          entry.raw && <Badge tone="accent">cleaned</Badge>
+        )}
         {entry.secs != null && (
           <>
             <span className="text-faint">·</span>
@@ -59,6 +156,21 @@ function Entry({ entry, onRetype, onDelete }) {
           <Button size="sm" variant="ghost" onClick={copy}>
             {copied ? 'Copied' : 'Copy'}
           </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            title="Select the misheard words first"
+            // On mousedown, before the click can collapse the selection.
+            onMouseDown={() => {
+              const sel = window.getSelection()
+              const text = sel ? sel.toString().trim() : ''
+              const inside = sel?.anchorNode && textRef.current?.contains(sel.anchorNode)
+              fixRef.current = inside ? text : ''
+            }}
+            onClick={() => onFix(fixRef.current)}
+          >
+            Fix
+          </Button>
           <Button size="sm" variant="ghost" onClick={run(() => onRetype(entry.id))}>
             Insert
           </Button>
@@ -68,13 +180,15 @@ function Entry({ entry, onRetype, onDelete }) {
         </div>
       </div>
 
-      <p className="selectable whitespace-pre-line text-[14.5px] leading-relaxed text-ink">{entry.text}</p>
+      <p ref={textRef} className="selectable whitespace-pre-line text-[14.5px] leading-relaxed text-ink">
+        {entry.text}
+      </p>
       {error && <p className="mt-1 text-[13px] text-live">{error}</p>}
 
       {entry.raw && (
         <details className="mt-2">
           <summary className="cursor-pointer text-[12.5px] text-faint hover:text-muted">
-            Before cleanup
+            {MODES[entry.mode]?.raw || 'Before cleanup'}
           </summary>
           <p className="selectable mt-1.5 whitespace-pre-line border-l-2 border-line pl-3 text-[13.5px] leading-relaxed text-muted">
             {entry.raw}
@@ -90,6 +204,7 @@ export default function History({ daemon }) {
   const [filter, setFilter] = useState('all')
   const [confirmClear, setConfirmClear] = useState(false)
   const [clearError, setClearError] = useState('')
+  const [fixing, setFixing] = useState(null)
   const resetConfirmLater = useTimer()
 
   const groups = useMemo(() => {
@@ -181,12 +296,15 @@ export default function History({ daemon }) {
                   entry={entry}
                   onRetype={daemon.retype}
                   onDelete={daemon.remove}
+                  onFix={(heard) => setFixing({ heard })}
                 />
               ))}
             </Card>
           </section>
         ))
       )}
+
+      <FixDialog open={!!fixing} heard={fixing?.heard} onClose={() => setFixing(null)} />
     </div>
   )
 }

@@ -30,7 +30,26 @@ const RESTART_KEYS = [
   'stt_backend',
   'compute_type',
   'hinglish',
+  'spoken_language',
 ]
+
+// "I speak" covers two stored settings: hinglish (English with Hindi/Urdu
+// words, typed in English) and spoken_language (the language decoded).
+const SPEAK_OPTIONS = [
+  { value: 'en', label: 'English', hint: 'English-only model, the fastest' },
+  { value: 'hinglish', label: 'English + Hinglish', hint: 'Hears Hindi and Urdu words; the output stays English' },
+  { value: 'hi', label: 'Hindi', hint: 'Multilingual model' },
+  { value: 'ur', label: 'Urdu', hint: 'Multilingual model' },
+  { value: 'auto', label: 'Detect each time', hint: 'Multilingual model; a little slower' },
+]
+const speakValue = (c) => (c.hinglish ? 'hinglish' : c.spoken_language || 'en')
+const OUTPUT_LABELS = {
+  '': { label: 'Same as I speak' },
+  en: { label: 'English' },
+  hi: { label: 'Hindi (Devanagari)' },
+  ur: { label: 'Urdu' },
+}
+const multilingual = (c) => c.hinglish || (c.spoken_language || 'en') !== 'en'
 
 // Each choice is { label, hint?, keys? }. The label is what the closed control
 // shows, so it stays short; the hint explains the choice in the open list.
@@ -299,7 +318,9 @@ const DESCRIBE = [
   ['hotkey', 'Hotkey', (v) => labelOf(HOTKEY_LABELS, v)],
   ['activation', 'Activation', (v) => labelOf(ACTIVATION_LABELS, v)],
   ['stt_backend', 'Transcribe with', (v) => labelOf(BACKEND_LABELS, v)],
-  ['hinglish', 'Language', (v) => (v ? 'English + Hinglish' : 'English')],
+  ['hinglish', 'English + Hinglish', onOff],
+  ['spoken_language', 'I speak', (v) => labelOf(Object.fromEntries(SPEAK_OPTIONS.map((o) => [o.value, o.label])), v || 'en')],
+  ['output_language', 'Type in', (v) => labelOf(OUTPUT_LABELS, v || '')],
   ['beam_size', 'Accuracy', (v) => labelOf(BEAM_LABELS, v)],
   ['insert_method', 'Insert text by', (v) => labelOf(INSERT_LABELS, v)],
   ['model_override', 'Local model', (v, ctx) => v || `${ctx.recommended} (recommended)`],
@@ -735,24 +756,43 @@ export default function Settings({ setGuard, updater }) {
           )}
 
           <Field
-            label="Language"
+            label="I speak"
             hint={
               cfg.hinglish
                 ? 'Uses the multilingual model, so Hindi/Urdu words are heard rather than guessed. Output is English.'
-                : 'English-only model: fastest and most accurate for pure English.'
+                : multilingual(cfg)
+                  ? 'Uses the multilingual model. Changing this restarts the daemon.'
+                  : 'English-only model: fastest and most accurate for pure English.'
             }
           >
             <Select
-              value={cfg.hinglish ? 'hinglish' : 'en'}
-              onChange={(v) => pick('hinglish')(v === 'hinglish')}
-              options={[
-                { value: 'en', label: 'English', hint: 'English-only model, the fastest' },
-                {
-                  value: 'hinglish',
-                  label: 'English + Hinglish',
-                  hint: 'Hears Hindi and Urdu words; the output stays English',
-                },
-              ]}
+              value={speakValue(cfg)}
+              onChange={(v) => {
+                setCfg((c) => ({
+                  ...c,
+                  hinglish: v === 'hinglish',
+                  spoken_language: v === 'hinglish' ? 'en' : v,
+                }))
+                ask()
+              }}
+              options={SPEAK_OPTIONS}
+            />
+          </Field>
+
+          <Field
+            label="Type in"
+            hint={
+              !cfg.output_language
+                ? 'Text comes out in the language you spoke'
+                : cfg.output_language === 'en' && multilingual(cfg) && !cloud
+                  ? 'Translated to English as it’s transcribed, no cleanup needed'
+                  : 'Translated by the cleanup pass, so it needs cleanup on and an OpenAI key'
+            }
+          >
+            <Select
+              value={cfg.output_language || ''}
+              onChange={pick('output_language')}
+              options={Object.entries(OUTPUT_LABELS).map(([value, o]) => ({ value, ...o }))}
             />
           </Field>
 
@@ -791,7 +831,7 @@ export default function Settings({ setGuard, updater }) {
               options={[
                 {
                   value: '',
-                  label: `${cfg.hinglish ? multilingualModel : defaultModel} (recommended)`,
+                  label: `${multilingual(cfg) ? multilingualModel : defaultModel} (recommended)`,
                   hint: 'Picked for the language you set above',
                 },
                 ...opts(choices.model || []),
@@ -910,7 +950,7 @@ export default function Settings({ setGuard, updater }) {
         changes={
           dirty
             ? describeChanges(initial, cfg, { openai: openaiKey, elevenlabs: sttKey }, {
-                recommended: cfg.hinglish ? multilingualModel : defaultModel,
+                recommended: multilingual(cfg) ? multilingualModel : defaultModel,
               })
             : []
         }

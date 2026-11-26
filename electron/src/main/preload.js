@@ -18,6 +18,9 @@ const call = async (channel, ...args) => {
 contextBridge.exposeInMainWorld('baatsun', {
   snapshot: () => call('daemon:snapshot'),
   toggle: () => call('daemon:toggle'),
+  notes: () => call('daemon:notes'),
+  windows: () => call('daemon:windows'),
+  refocus: () => call('daemon:refocus'),
   status: () => call('daemon:status'),
   history: () => call('daemon:history'),
   historyFromDisk: () => call('history:disk'),

@@ -172,6 +172,9 @@ const handle = (channel, fn) =>
 
 handle('daemon:snapshot', () => snapshot)
 handle('daemon:toggle', () => daemon.toggle())
+handle('daemon:notes', () => daemon.notes())
+handle('daemon:windows', () => daemon.windows())
+handle('daemon:refocus', () => daemon.refocus())
 handle('daemon:status', () => daemon.status())
 handle('daemon:history', () => daemon.history())
 handle('daemon:cost', () => daemon.cost())

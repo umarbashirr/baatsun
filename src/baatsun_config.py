@@ -126,7 +126,27 @@ DEFAULT_CONFIG = {
     # applied where Enter starts a new line — never in a chat window, where it
     # would send the message in pieces.
     "line_breaks": True,
+    # The language you speak: "en", "hi", "ur", or "auto" to detect it each
+    # time. Anything but English switches to the multilingual model (needs a
+    # daemon restart), the same model the Hinglish setting uses.
+    "spoken_language": "en",
+    # The language the text is typed in: "" for whatever you spoke, or "en",
+    # "hi", "ur". Speaking another language and typing English is done by the
+    # local model itself; any other translation needs the cleanup pass.
+    "output_language": "",
+    # Your own window rules: [{"match": "Company Mail", "surface": "email"}].
+    # Checked before the built-in patterns in baatsun_context.
+    "app_rules": [],
+    # Spoken shortcuts: [{"trigger": "my signature", "text": "..."}]. Saying
+    # the trigger on its own types the text exactly as saved.
+    "snippets": [],
+    # Taught mishearings: [{"heard": "ground mainly", "correct": "grant me
+    # leave"}], replaced in every transcript before anything else runs.
+    "corrections": [],
 }
+
+SPOKEN_LANGUAGE_CHOICES = ["en", "hi", "ur", "auto"]
+OUTPUT_LANGUAGE_CHOICES = ["", "en", "hi", "ur"]
 
 COMPUTE_TYPE_CHOICES = ["int8", "int8_float16", "float16", "float32"]
 # Offered in the Settings page beside DEFAULT_MODEL. Not exhaustive — anything
@@ -151,7 +171,16 @@ def resolve_model(cfg):
     for the dictation language (English-only, or multilingual for Hinglish)."""
     if cfg.get("model_override"):
         return cfg["model_override"]
-    return DEFAULT_MULTILINGUAL_MODEL if cfg.get("hinglish") else DEFAULT_MODEL
+    multilingual = cfg.get("hinglish") or (cfg.get("spoken_language") or "en") != "en"
+    return DEFAULT_MULTILINGUAL_MODEL if multilingual else DEFAULT_MODEL
+
+
+def resolve_spoken_language(cfg):
+    """The language code to decode in, or None to let the model detect it."""
+    lang = cfg.get("spoken_language") or "en"
+    if lang not in SPOKEN_LANGUAGE_CHOICES:
+        return WHISPER_LANGUAGE
+    return None if lang == "auto" else lang
 
 
 def resolve_beam_size(cfg):

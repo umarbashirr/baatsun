@@ -48,6 +48,15 @@ function Tile({ label, value, hint, tone }) {
   )
 }
 
+const SURFACE_NAMES = {
+  email: 'Email',
+  chat: 'Chat',
+  post: 'Posts',
+  social: 'Feed posts',
+  docs: 'Documents',
+  code: 'Code',
+}
+
 export default function Home({ daemon, onNavigate }) {
   const [name, setName] = useState('')
   const [cleanupModel, setCleanupModel] = useState('gpt-6-luna')
@@ -124,6 +133,41 @@ export default function Home({ daemon, onNavigate }) {
           />
         </div>
       </Section>
+
+      {stats.weekWords > 0 && (
+        <Section title="This week">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            <Tile
+              label="Words"
+              value={humanCount(stats.weekWords)}
+              hint={
+                stats.lastWeekWords > 0
+                  ? `${stats.weekWords >= stats.lastWeekWords ? 'up' : 'down'} ${Math.abs(
+                      Math.round(((stats.weekWords - stats.lastWeekWords) / stats.lastWeekWords) * 100),
+                    )}% on last week`
+                  : 'nothing to compare with yet'
+              }
+            />
+            <Tile label="Speaking pace" value={stats.weekWpm ? `${stats.weekWpm} wpm` : '—'} hint={`typing is about ${TYPING_WPM} wpm`} />
+            <Tile
+              label="Voice extras"
+              value={humanCount(
+                (stats.modes.edit || 0) + (stats.modes.compose || 0) + (stats.modes.snippet || 0) + (stats.modes.notes || 0),
+              )}
+              hint="edits, snippets and notes, all time"
+            />
+          </div>
+          {stats.topSurfaces.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {stats.topSurfaces.map(([surface, count]) => (
+                <span key={surface} className="rounded-full bg-sand px-3.5 py-1.5 text-[13.5px] text-muted">
+                  <span className="font-medium text-ink">{SURFACE_NAMES[surface] || surface}</span> · {count}
+                </span>
+              ))}
+            </div>
+          )}
+        </Section>
+      )}
 
       <Section title="Activity">
         <ActivityChart entries={daemon.entries} />

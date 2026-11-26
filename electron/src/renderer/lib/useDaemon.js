@@ -101,6 +101,7 @@ export function useDaemon() {
   const actions = useMemo(
     () => ({
       toggle: () => api.toggle(),
+      notes: () => api.notes(),
       retype: (id) => api.retypeEntry(id),
       remove: (id) => api.deleteEntry(id),
       clear: () => api.clearHistory(),

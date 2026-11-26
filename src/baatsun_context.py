@@ -177,6 +177,75 @@ def _app_names(app):
     return names
 
 
+SURFACES = (CODE, EMAIL, CHAT, POST, SOCIAL, DOCS)
+
+
+def _rules():
+    """Your own window rules from config.json, re-read when the file changes.
+
+    Imported here rather than at the top so this module stays importable on
+    its own; baatsun_config caches by file stat, so this is cheap per call.
+    """
+    try:
+        import baatsun_config
+        rules = baatsun_config.load_config().get("app_rules")
+    except Exception:  # noqa: BLE001 - a broken config must not break typing
+        return []
+    return rules if isinstance(rules, list) else []
+
+
+def rule_surface(app, title, rules=None):
+    """The surface a user rule assigns to this window, or None.
+
+    A rule's "match" is compared case-insensitively against the window title
+    (as whole words) and the window class (exactly). Rules are checked before
+    anything built in: they exist precisely for the windows the built-in
+    patterns get wrong, like a Workspace mail tab with a company's name on it.
+    The first matching rule wins.
+    """
+    title = (title or "").lower()
+    names = _app_names(app)
+    for rule in _rules() if rules is None else rules:
+        if not isinstance(rule, dict):
+            continue
+        match = str(rule.get("match") or "").strip().lower()
+        kind = rule.get("surface")
+        if not match or kind not in SURFACES:
+            continue
+        # Whole words, so a short rule like "X" can't fire on every title
+        # that merely contains the letter.
+        if match in names or re.search(r"(?<!\w)" + re.escape(match) + r"(?!\w)", title):
+            return kind
+    return None
+
+
+# Browser names as they appear at the end of a window title.
+_BROWSER_SUFFIX = re.compile(
+    r"\s+[-—|]\s+(?:google chrome|chromium|mozilla firefox|firefox|brave|"
+    r"microsoft\s*edge|vivaldi|opera|zen browser|librewolf|web)\s*$",
+    re.IGNORECASE,
+)
+# Unread counts and similar that change from one minute to the next.
+_VOLATILE = re.compile(r"^\(\d+\)\s*|\s*\(\d+\)$")
+
+
+def suggest_match(app=None, title=None):
+    """A stable piece of this window to write a rule against.
+
+    For a browser, the site's own name: the last part of the title once the
+    browser's name is gone ("Inbox (3) - you@co.com - Company Mail - Google
+    Chrome" -> "Company Mail"). Page titles change as you click around; the
+    site's name at the end does not. For anything else, the window class.
+    """
+    names = _app_names(app)
+    if any(n in BROWSER_APPS for n in names) and title:
+        stem = _BROWSER_SUFFIX.sub("", title.strip())
+        parts = [p.strip() for p in re.split(r"\s+[-—|·•/]\s+", stem) if p.strip()]
+        if parts:
+            return _VOLATILE.sub("", parts[-1]).strip() or parts[-1]
+    return (app or "").strip()
+
+
 def surface(app=None, title=None):
     """Name the kind of place a transcript is about to be typed into.
 
@@ -191,6 +260,10 @@ def surface(app=None, title=None):
     dominant use is both what's knowable from here and what's right nearly
     always.
     """
+    ruled = rule_surface(app, title)
+    if ruled:
+        return ruled
+
     names = _app_names(app)
     title = title or ""
 

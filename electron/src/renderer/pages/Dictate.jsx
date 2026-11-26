@@ -19,6 +19,16 @@ const REASONS = {
   failed: 'Transcription failed — the recording was kept on disk.',
   insert_failed: 'Could not paste into the window — the text is in History. Is ydotoold running?',
   mic_failed: 'Could not open the microphone — is PipeWire (pw-record) installed?',
+  scratched: 'Removed the last dictation.',
+  nothing_to_scratch: 'Nothing recent to remove in that window.',
+  needs_key: 'That needs an OpenAI key — add one in Settings.',
+  edit_failed: 'The voice edit didn’t come back, so nothing was changed.',
+  notes_failed: 'Couldn’t organise the notes, so the plain transcript was kept.',
+}
+
+const MODE_COPY = {
+  command: { title: 'Listening for an edit', body: 'Say what to do with the selected text, then let go.' },
+  notes: { title: 'Taking notes', body: 'Talk as long as you like. Press Stop when you’re done.' },
 }
 
 // Replies to "toggle" that mean nothing happened.
@@ -108,7 +118,8 @@ export default function Dictate({ daemon }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const current = daemon.state.state || 'idle'
-  const copy = COPY[current] || COPY.idle
+  const mode = daemon.state.mode
+  const copy = (current === 'listening' && MODE_COPY[mode]) || COPY[current] || COPY.idle
   const reason = daemon.state.reason ? REASONS[daemon.state.reason] : ''
 
   // The newest transcript is the last one the daemon appended.
@@ -129,6 +140,22 @@ export default function Dictate({ daemon }) {
       if (reply !== 'started' && reply !== 'stopped') {
         // No state change follows a refused toggle, so nothing else would
         // re-enable the button.
+        setError(TOGGLE_ERRORS[reply] || `The daemon replied “${reply}”.`)
+        setBusy(false)
+      }
+    } catch (err) {
+      setError(err.message)
+      setBusy(false)
+    }
+  }
+
+  const takeNotes = async () => {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try {
+      const reply = await daemon.notes()
+      if (reply !== 'started' && reply !== 'stopped') {
         setError(TOGGLE_ERRORS[reply] || `The daemon replied “${reply}”.`)
         setBusy(false)
       }
@@ -162,15 +189,25 @@ export default function Dictate({ daemon }) {
         )}
         {error && <p className="mt-3 text-[13.5px] text-live">{error}</p>}
 
-        <Button
-          variant={current === 'listening' ? 'danger' : 'primary'}
-          size="md"
-          className="mt-5"
-          onClick={toggle}
-          disabled={busy || current === 'transcribing' || !daemon.connected}
-        >
-          {current === 'listening' ? 'Stop and transcribe' : 'Start dictating'}
-        </Button>
+        <div className="mt-5 flex gap-2">
+          <Button
+            variant={current === 'listening' ? 'danger' : 'primary'}
+            size="md"
+            onClick={toggle}
+            disabled={busy || current === 'transcribing' || !daemon.connected}
+          >
+            {current === 'listening' ? 'Stop and transcribe' : 'Start dictating'}
+          </Button>
+          {current !== 'listening' && (
+            <Button
+              size="md"
+              onClick={takeNotes}
+              disabled={busy || current === 'transcribing' || !daemon.connected}
+            >
+              Take notes
+            </Button>
+          )}
+        </div>
       </div>
 
       <Section title="Where the next transcript lands">
@@ -215,7 +252,7 @@ export default function Dictate({ daemon }) {
           }
         >
           <Card className="px-4 py-3.5">
-            <p className="selectable text-[14.5px] leading-relaxed text-ink">
+            <p className="selectable whitespace-pre-line text-[14.5px] leading-relaxed text-ink">
               {latest.text}
             </p>
             {latest.raw && (
@@ -231,6 +268,23 @@ export default function Dictate({ daemon }) {
           </Card>
         </Section>
       )}
+
+      <Section title="More than dictation">
+        <Card className="divide-y divide-line">
+          {[
+            ['Edit by voice', 'Select text, hold your hotkey with Shift (Alt if your hotkey already uses Shift), and say what to do: “make this more polite”, “translate to Hindi”. With nothing selected, it writes what you ask for.'],
+            ['Take back the last dictation', 'Say “scratch that” on its own.'],
+            ['Layout as you speak', 'Say “new paragraph”, “new line” or “bullet point” (needs cleanup on).'],
+            ['Snippets and corrections', 'Set them up on the Words page.'],
+            ['Notes', 'Take notes turns a long ramble into a summary, key points and action items. They go to History, and into the focused window if it isn’t Baatsun.'],
+          ].map(([title, body]) => (
+            <div key={title} className="px-5 py-3.5">
+              <p className="text-[14.5px] font-medium text-ink">{title}</p>
+              <p className="mt-0.5 text-[13.5px] leading-snug text-muted">{body}</p>
+            </div>
+          ))}
+        </Card>
+      </Section>
     </div>
   )
 }

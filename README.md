@@ -476,6 +476,19 @@ desktop notification saying why, instead of nothing happening.
 4. Release either key → "Transcribing…" then the text is pasted in and
    appended to the history window.
 
+### Beyond dictation
+
+| | How | Needs an OpenAI key |
+|---|---|---|
+| **Edit by voice** | Select text, hold the hotkey **plus Shift** (Alt if your hotkey already uses Shift), and say what to do: "make this more polite", "shorter", "translate to Hindi". With nothing selected, it writes what you ask for ("write a reply saying I'll be ten minutes late"). Your clipboard is put back afterwards. | yes |
+| **Scratch that** | Say "scratch that" (or "delete that") on its own to remove the last dictation, if it went into the same window in the last 10 minutes. | no |
+| **Layout commands** | Say "new paragraph", "new line" or "bullet point" mid-dictation. | yes (cleanup) |
+| **Snippets** | Save text on the Words page under a trigger ("my signature"). Saying the trigger on its own, or "insert" and the trigger, types it exactly. | no |
+| **Corrections** | "Heard X, meant Y" pairs, from the Words page or by selecting words in History and pressing **Fix**. Applied to every transcript before anything else, even with cleanup off. | no |
+| **Notes** | **Take notes** on the Dictate page records a long ramble and turns it into a summary, key points, decisions and action items. Saved to History, and typed into the focused window unless that's Baatsun. Without a key you get the plain transcript. | to organise |
+| **Languages** | Settings → *I speak* (English, Hinglish, Hindi, Urdu, detect) and *Type in* (same, English, Hindi, Urdu). Speaking Hindi/Urdu and typing English is done by the local model itself; other translations go through cleanup. | for most translations |
+| **Apps** | The Apps page lists recent windows and how each is treated. Change one and it becomes a rule, checked before anything built in. | no |
+
 `baatsun-toggle` also exists as a manual/scriptable alternative (sends a
 toggle command over the daemon's unix socket) — useful for testing without
 touching the keyboard, but not needed for day-to-day use.
@@ -757,10 +770,13 @@ journal records word counts, not what you said; set
 `Environment=BAATSUN_LOG_TRANSCRIPTS=1` on the service if you want transcripts
 in `journalctl` for debugging.
 
-There are two exceptions, both opt-in and both off unless you turn them on:
+There are three exceptions, all opt-in and all off unless you turn them on:
 
 - **Cleanup with OpenAI** sends the *transcript text* (never the audio) to
   OpenAI, for the windows classified as prose.
+- **Edit by voice** (hotkey + Shift) sends your spoken instruction *and the
+  text you had selected* to OpenAI, from whatever window it's in, including
+  terminals and editors. Only when you use it, and only with a key set.
 - **Transcribe with ElevenLabs** sends the *audio itself* — the recorded wav for
   every dictation, whatever the window. This is the bigger of the two, and it is
   the only setting in Baatsun that takes your voice off this machine.

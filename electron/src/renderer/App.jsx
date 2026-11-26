@@ -6,6 +6,7 @@ import Dictate from './pages/Dictate.jsx'
 import History from './pages/History.jsx'
 import Costs from './pages/Costs.jsx'
 import Words from './pages/Words.jsx'
+import Apps from './pages/Apps.jsx'
 import Settings from './pages/Settings.jsx'
 import UpdateDialog from './components/UpdateDialog.jsx'
 import { Badge, Button } from './components/ui.jsx'
@@ -25,6 +26,7 @@ const PAGES = [
   { id: 'dictate', label: 'Dictate', Component: Dictate },
   { id: 'history', label: 'History', Component: History },
   { id: 'words', label: 'Words', Component: Words },
+  { id: 'apps', label: 'Apps', Component: Apps },
   { id: 'costs', label: 'Costs', Component: Costs },
   { id: 'settings', label: 'Settings', Component: Settings },
 ]
@@ -137,6 +139,7 @@ const ICONS = {
   history: 'M3.5 12a8.5 8.5 0 1 0 2.6-6.1M3.5 4.5V10H9M12 7.5V12l3.5 2',
   costs: 'M14.5 8.5h-4a1.75 1.75 0 0 0 0 3.5h3a1.75 1.75 0 0 1 0 3.5h-4M12 7v10M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z',
   words: 'M4 6h16M4 12h10M4 18h13',
+  apps: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
   settings:
     'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm8-3.5a8 8 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a8 8 0 0 0-2-1.2L15 3H9l-.4 2.6a8 8 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a8.1 8.1 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a8 8 0 0 0 2 1.2L9 21h6l.4-2.6a8 8 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.07-.4.1-.8.1-1.2Z',
 }

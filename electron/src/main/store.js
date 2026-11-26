@@ -38,6 +38,11 @@ const DEFAULTS = {
   beam_size: 5,
   insert_method: 'paste',
   line_breaks: true,
+  spoken_language: 'en',
+  output_language: '',
+  app_rules: [],
+  snippets: [],
+  corrections: [],
 }
 
 const CHOICES = {
@@ -53,6 +58,9 @@ const CHOICES = {
   cleanup_reasoning: ['none', 'low', 'medium', 'high'],
   beam_size: [1, 3, 5],
   insert_method: ['paste', 'type'],
+  spoken_language: ['en', 'hi', 'ur', 'auto'],
+  output_language: ['', 'en', 'hi', 'ur'],
+  surface: ['email', 'chat', 'post', 'social', 'docs', 'code'],
 }
 
 const DEFAULT_MODEL = 'small.en'

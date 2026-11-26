@@ -27,6 +27,7 @@ import baatsun_cleanup
 import baatsun_context
 import baatsun_insert
 import baatsun_stt
+import baatsun_voice
 from baatsun_config import (
     ACTIVATION_CHOICES,
     CONFIG_PATH,
@@ -39,6 +40,7 @@ from baatsun_config import (
     load_stt_api_key,
     resolve_beam_size,
     resolve_model,
+    resolve_spoken_language,
     resolve_stt_backend,
 )
 
@@ -56,6 +58,11 @@ HINGLISH = bool(config.get("hinglish"))
 # Pinned to English even for Hinglish — see baatsun_stt.transcribe: unpinned,
 # Scribe writes the Hindi parts in Devanagari, and the output here is English.
 SCRIBE_LANGUAGE = WHISPER_LANGUAGE
+# The language you speak, read once like the model it decides. None means
+# detect it on each dictation. Hinglish still decodes as English (see above).
+SPOKEN_LANGUAGE = resolve_spoken_language(config)
+if SPOKEN_LANGUAGE != WHISPER_LANGUAGE:
+    SCRIBE_LANGUAGE = SPOKEN_LANGUAGE
 # Same path every other component uses: $XDG_RUNTIME_DIR, which systemd sets
 # to /run/user/$UID for a user service.
 SOCKET_PATH = os.path.join(
@@ -83,6 +90,14 @@ def resolve_hotkey(name):
 
 
 PRIMARY_KEYS, SECONDARY_KEYS = resolve_hotkey(config["hotkey"])
+# Held together with the hotkey, it turns a dictation into a voice edit of the
+# selected text. Shift, unless the hotkey already uses Shift, then Alt.
+COMMAND_KEYS = (KEY_GROUPS["alt"] if KEY_GROUPS["shift"] in (PRIMARY_KEYS, SECONDARY_KEYS)
+                else KEY_GROUPS["shift"])
+
+# What a recording is for. Set when it starts (and upgraded to a voice edit if
+# the modifier joins mid-recording), and carried through to the finish thread.
+DICTATE, COMMAND, NOTES = "dictate", "command", "notes"
 
 
 def resolve_activation(name):
@@ -119,7 +134,18 @@ state = {
     # ElevenLabs live slicer, if this recording is being chopped into 20s
     # Scribe calls while the mic is still open. None for the local backend.
     "capture": None,
+    "mode": DICTATE,
 }
+# The last text this daemon put into a window, so "scratch that" can take it
+# back. Only honoured in the same window, and only for a while.
+last_insert_lock = threading.Lock()
+last_insert = {"app": None, "text": "", "ts": 0.0}
+SCRATCH_WINDOW_SECONDS = 10 * 60
+# Windows the daemon has seen focused recently, for the Apps page: the place to
+# check how each is classified and teach it otherwise. In memory only.
+recent_windows_lock = threading.Lock()
+recent_windows = []
+RECENT_WINDOWS_LIMIT = 12
 # The thread running the current transcription, so shutdown can wait for it to
 # type what it has rather than exiting mid-dictation.
 finish_thread = None
@@ -243,7 +269,8 @@ def save_history():
 
 
 def add_history_entry(text, raw=None, app=None, context=None, secs=None,
-                      usage=None, stt=None):
+                      usage=None, stt=None, mode=None, surface=None,
+                      force_raw=False):
     """Record a transcript, keeping the pre-cleanup text when it differed.
 
     "raw" is omitted when cleanup made no change or didn't run, so the common
@@ -260,8 +287,14 @@ def add_history_entry(text, raw=None, app=None, context=None, secs=None,
     global next_entry_id
     with history_lock:
         entry = {"id": next_entry_id, "text": text, "ts": time.time()}
-        if raw is not None and raw != text:
+        if raw is not None and (raw != text or force_raw):
             entry["raw"] = raw
+        # Not a plain dictation: "snippet", "edit", "compose" or "notes".
+        if mode:
+            entry["mode"] = mode
+        # Where it landed, by kind of place, for the Home page's breakdown.
+        if surface:
+            entry["surface"] = surface
         if app:
             entry["app"] = app
         if context:
@@ -366,6 +399,8 @@ def focus_event():
         # — that one is what decides whether anything is rewritten at all, and
         # it is the word history entries are recorded under.
         "surface": baatsun_context.surface(app, title),
+        # What a rule for this window would be written against.
+        "match": baatsun_context.suggest_match(app, title),
         "cleanup": bool(cleanup_ready(cfg)
                         and baatsun_context.should_clean(cfg, app, title)),
     }
@@ -618,7 +653,7 @@ class LiveScribe:
             log(f"elevenlabs chunk {n} failed")
 
 
-def start_recording():
+def start_recording(mode=DICTATE):
     """Start a recording. Callers hold state_lock. Returns True if one started.
 
     Refuses when one is already running: overwriting state here would orphan
@@ -652,6 +687,7 @@ def start_recording():
         broadcast_state("idle", reason="mic_failed")
         return False
     state["recording"] = True
+    state["mode"] = mode
     state["proc"] = proc
     state["wav_path"] = wav_path
     state["started"] = time.monotonic()
@@ -667,8 +703,8 @@ def start_recording():
     timer.daemon = True
     state["timer"] = timer
     timer.start()
-    broadcast_state("listening")
-    log(f"recording started -> {wav_path}")
+    broadcast_state("listening", mode=mode)
+    log(f"recording started ({mode}) -> {wav_path}")
     return True
 
 
@@ -747,6 +783,7 @@ def maybe_clean(text, app, title):
         surface=surface,
         timeout=baatsun_cleanup.timeout_for(text, cleanup_model),
         reasoning=cfg.get("cleanup_reasoning") or DEFAULT_CLEANUP_REASONING,
+        output_language=output_language_for_cleanup(),
     )
     # Empty when the request never got as far as an answer, which is a
     # different thing from a call that cost nothing.
@@ -762,7 +799,7 @@ def maybe_clean(text, app, title):
 def stop_recording():
     """Take the running recording off the state and hand back what finishes it.
 
-    Callers hold state_lock. Returns a (proc, wav_path, secs, capture) tuple
+    Callers hold state_lock. Returns a (proc, wav_path, secs, capture, mode) tuple
     to pass to finish_recording, or None when there was nothing running.
     capture is a LiveScribe for ElevenLabs, or None for the local backend.
 
@@ -779,11 +816,13 @@ def stop_recording():
     wav_path = state["wav_path"]
     started = state["started"]
     capture = state["capture"]
+    mode = state["mode"]
     state["recording"] = False
     state["proc"] = None
     state["wav_path"] = None
     state["started"] = None
     state["capture"] = None
+    state["mode"] = DICTATE
 
     if proc is None or wav_path is None:
         return None
@@ -794,7 +833,7 @@ def stop_recording():
     state["finishing"] = True
     # Monotonic, so a clock adjustment mid-dictation can't make this negative.
     secs = None if started is None else time.monotonic() - started
-    return proc, wav_path, secs, capture
+    return proc, wav_path, secs, capture, mode
 
 
 def start_finishing(pending):
@@ -819,9 +858,9 @@ def finish_recording(pending):
     recording from overlapping this one, and it is cleared here whatever
     happens — leaving it set would wedge the hotkey for good.
     """
-    proc, wav_path, secs, capture = pending
+    proc, wav_path, secs, capture, mode = pending
     try:
-        _finish_recording(proc, wav_path, secs, capture)
+        _finish_recording(proc, wav_path, secs, capture, mode)
     except Exception as exc:  # noqa: BLE001
         # Without this an unexpected error killed the thread silently: the
         # wav was deleted by the finally below, nothing was typed or saved,
@@ -835,7 +874,7 @@ def finish_recording(pending):
             state["finishing"] = False
 
 
-def _finish_recording(proc, wav_path, secs, capture):
+def _finish_recording(proc, wav_path, secs, capture, mode=DICTATE):
     proc.send_signal(signal.SIGINT)
     try:
         proc.wait(timeout=5)
@@ -902,7 +941,10 @@ def _finish_recording(proc, wav_path, secs, capture):
             # decoder steps.
             segments, _info = model.transcribe(
                 wav_path,
-                language=WHISPER_LANGUAGE,
+                language=SPOKEN_LANGUAGE,
+                # Speaking another language and typing English is something
+                # whisper does itself, better than translating its transcript.
+                task="translate" if whisper_translates() else "transcribe",
                 beam_size=resolve_beam_size(load_config()),
                 initial_prompt=vocabulary or None,
                 vad_filter=True,
@@ -922,31 +964,40 @@ def _finish_recording(proc, wav_path, secs, capture):
 
         log(f"transcript: {text!r}" if LOG_TRANSCRIPTS
             else f"transcript ready ({len(text.split())} words)")
-        # Read the focused window once and use it for both decisions. Two
-        # separate reads could disagree if the user switched windows mid-
+        # Read the focused window once and use it for every decision below.
+        # Two separate reads could disagree if the user switched windows mid-
         # cleanup, and an entry that says "verbatim" about text that was in
         # fact rewritten is worse than one that is a window out of date.
         with focus_lock:
             app, title = focus["app"], focus["title"]
-        context = baatsun_context.classify(app, title)
+        cfg = load_config()
+        # Taught corrections first: everything after should see the words the
+        # speaker meant, including the snippet and command matching. History
+        # keeps what was actually heard, so a correction can be audited.
+        heard = text
+        text = baatsun_voice.apply_corrections(text, cfg.get("corrections"))
 
-        raw = text
+        if mode == COMMAND:
+            finish_voice_edit(text, app, title, secs, stt_usage)
+            return
+        if mode == NOTES:
+            finish_notes(text, app, title, secs, stt_usage, heard=heard)
+            return
+
+        if baatsun_voice.match_command(text) == baatsun_voice.SCRATCH:
+            scratch_last(app)
+            return
+        snippet = baatsun_voice.match_snippet(text, cfg.get("snippets"))
+        if snippet is not None:
+            log("snippet matched — typing it as saved")
+            deliver(snippet, app, title, raw=heard, secs=secs, stt=stt_usage,
+                    context=baatsun_context.classify(app, title), mode="snippet")
+            return
+
+        context = baatsun_context.classify(app, title)
         text, usage = maybe_clean(text, app, title)
-        # Enter sends in a chat window, so no newline reaches one, whatever
-        # the cleanup model returned. Terminals and editors keep theirs, and
-        # insertion makes each one a soft newline instead of an Enter.
-        if not baatsun_context.allows_line_breaks(app, title):
-            text = " ".join(text.split())
-        inserted, how = insert_transcript(
-            text, app, soft_newlines=baatsun_context.soft_newlines(app, title))
-        entry = add_history_entry(text, raw, app=app, context=context,
-                                  secs=secs, usage=usage, stt=stt_usage)
-        broadcast({"type": "transcript", "entry": entry})
-        if inserted:
-            broadcast_state("idle")
-        else:
-            # Saved in history either way, so it can be copied from there.
-            broadcast_state("idle", reason="insert_failed", error=how)
+        deliver(text, app, title, raw=heard, secs=secs, usage=usage,
+                stt=stt_usage, context=context)
     except Exception:
         # Whatever failed, the audio is the only copy of what was said.
         keep_wav = True
@@ -958,6 +1009,195 @@ def _finish_recording(proc, wav_path, secs, capture):
                 os.remove(wav_path)
             except OSError:
                 pass
+
+
+def whisper_translates():
+    """Whether the local model itself translates speech into English."""
+    out = load_config().get("output_language") or ""
+    return STT_BACKEND != "elevenlabs" and out == "en" and SPOKEN_LANGUAGE != "en"
+
+
+def output_language_for_cleanup():
+    """The language the cleanup pass should write in, or None.
+
+    None when no translation is wanted, or when whisper already produced the
+    English that was asked for.
+    """
+    out = load_config().get("output_language") or ""
+    if not out or whisper_translates():
+        return None
+    return out
+
+
+def is_self(app):
+    """Whether a window class is Baatsun's own window."""
+    return "baatsun" in (app or "").lower()
+
+
+def deliver(text, app, title, raw=None, secs=None, usage=None, stt=None,
+            context=None, mode=None):
+    """Type text into the window, record it, and tell the GUIs."""
+    # Enter sends in a chat window, so no newline reaches one, whatever
+    # the cleanup model returned. Terminals and editors keep theirs, and
+    # insertion makes each one a soft newline instead of an Enter.
+    if not baatsun_context.allows_line_breaks(app, title):
+        text = " ".join(text.split())
+    inserted, how = insert_transcript(
+        text, app, soft_newlines=baatsun_context.soft_newlines(app, title))
+    if inserted:
+        remember_insert(app, text)
+    entry = add_history_entry(text, raw, app=app, context=context, secs=secs,
+                              usage=usage, stt=stt, mode=mode,
+                              surface=baatsun_context.surface(app, title))
+    broadcast({"type": "transcript", "entry": entry})
+    if inserted:
+        broadcast_state("idle")
+    else:
+        # Saved in history either way, so it can be copied from there.
+        broadcast_state("idle", reason="insert_failed", error=how)
+
+
+def remember_insert(app, text):
+    with last_insert_lock:
+        last_insert.update(app=app, text=text, ts=time.monotonic())
+
+
+def scratch_last(app):
+    """Take back the last thing typed, if it went into this same window."""
+    with last_insert_lock:
+        prev = dict(last_insert)
+        fresh = (prev["text"] and prev["app"] == app
+                 and time.monotonic() - prev["ts"] < SCRATCH_WINDOW_SECONDS)
+        if fresh:
+            last_insert.update(app=None, text="", ts=0.0)
+    if not fresh:
+        log("scratch that — nothing recent to remove in this window")
+        broadcast_state("idle", reason="nothing_to_scratch")
+        return
+    ok, err = baatsun_insert.delete_chars(len(prev["text"]))
+    log("scratched the last dictation" if ok else f"could not scratch: {err}")
+    broadcast_state("idle", reason="scratched" if ok else "insert_failed",
+                    **({} if ok else {"error": err}))
+
+
+def finish_voice_edit(instruction, app, title, secs, stt_usage):
+    """Apply a spoken instruction to the selection, or write from it."""
+    cfg = load_config()
+    api_key = load_api_key()
+    if not api_key:
+        log("voice edit needs an OpenAI key — none is set")
+        broadcast_state("idle", reason="needs_key")
+        return
+    selection, clipboard = baatsun_insert.copy_selection(app)
+    surface = baatsun_context.surface(app, title)
+    cleanup_model = cfg.get("cleanup_model") or DEFAULT_CLEANUP_MODEL
+    usage = {}
+    words = len(instruction.split()) + len((selection or "").split())
+    result = baatsun_cleanup.edit(
+        instruction, selection, api_key, cleanup_model, log=log,
+        surface=surface, usage=usage,
+        timeout=baatsun_cleanup.timeout_for(" ".join(["w"] * words), cleanup_model),
+        reasoning=cfg.get("cleanup_reasoning") or DEFAULT_CLEANUP_REASONING,
+        output_language=cfg.get("output_language") or None)
+    if not result:
+        log("voice edit produced nothing usable — leaving the text alone")
+        broadcast_state("idle", reason="edit_failed")
+        return
+    log(f"voice edit ({'selection' if selection else 'new text'}, {len(result)} chars)")
+    if not baatsun_context.allows_line_breaks(app, title):
+        result = " ".join(result.split())
+    method = cfg.get("insert_method") or "paste"
+    inserted, how = baatsun_insert.insert(
+        result, app=app, method=method, log=log,
+        soft_newlines=baatsun_context.soft_newlines(app, title),
+        restore=clipboard)
+    if inserted:
+        remember_insert(app, result)
+    entry = add_history_entry(result, instruction, app=app,
+                              context=baatsun_context.classify(app, title),
+                              secs=secs, usage=usage or None, stt=stt_usage,
+                              mode="edit" if selection else "compose",
+                              surface=surface, force_raw=True)
+    broadcast({"type": "transcript", "entry": entry})
+    broadcast_state("idle", **({} if inserted else {"reason": "insert_failed", "error": how}))
+
+
+def finish_notes(text, app, title, secs, stt_usage, heard=None):
+    """Turn a long dictation into structured notes and keep them in History.
+
+    Typed into the focused window too, unless that window is Baatsun itself —
+    where notes started from the Dictate page would otherwise land.
+    """
+    cfg = load_config()
+    api_key = load_api_key()
+    usage = {}
+    result = None
+    if api_key:
+        cleanup_model = cfg.get("cleanup_model") or DEFAULT_CLEANUP_MODEL
+        result = baatsun_cleanup.notes(
+            text, api_key, cleanup_model, log=log, usage=usage,
+            timeout=baatsun_cleanup.timeout_for(text, cleanup_model),
+            reasoning=cfg.get("cleanup_reasoning") or DEFAULT_CLEANUP_REASONING,
+            vocabulary=cfg.get("vocabulary") or "",
+            output_language=output_language_for_cleanup())
+    else:
+        log("notes need an OpenAI key to be organised — keeping the raw transcript")
+    notes_text = result or text
+    inserted, how = True, ""
+    if not is_self(app):
+        inserted, how = insert_transcript(
+            notes_text, app, soft_newlines=baatsun_context.soft_newlines(app, title))
+        if inserted:
+            remember_insert(app, notes_text)
+    entry = add_history_entry(notes_text, heard or text,
+                              app=None if is_self(app) else app,
+                              secs=secs, usage=usage or None, stt=stt_usage,
+                              mode="notes")
+    broadcast({"type": "transcript", "entry": entry})
+    if not inserted:
+        broadcast_state("idle", reason="insert_failed", error=how)
+    else:
+        broadcast_state("idle", reason=None if result else ("needs_key" if not api_key else "notes_failed"))
+
+
+def handle_notes():
+    """Start a notes recording, or stop whatever recording is running."""
+    with state_lock:
+        if state["recording"]:
+            pending = stop_recording()
+        elif state["finishing"]:
+            return "busy"
+        else:
+            return "started" if start_recording(NOTES) else "mic_failed"
+    start_finishing(pending)
+    return "stopped"
+
+
+def note_window(app, title):
+    """Remember a focused window for the Apps page (not Baatsun's own)."""
+    if not app or is_self(app):
+        return
+    match = baatsun_context.suggest_match(app, title)
+    if not match:
+        return
+    with recent_windows_lock:
+        recent_windows[:] = [w for w in recent_windows if w["match"] != match]
+        # The full title stays in memory only, to classify the window the way
+        # a dictation into it would be; the Apps page is sent the match.
+        recent_windows.insert(0, {"app": app, "match": match, "title": title})
+        del recent_windows[RECENT_WINDOWS_LIMIT:]
+
+
+def windows_payload():
+    """Recent windows with how each is classified right now."""
+    with recent_windows_lock:
+        windows = list(recent_windows)
+    return [{
+        "app": w["app"],
+        "match": w["match"],
+        "surface": baatsun_context.surface(w["app"], w["title"]),
+        "ruled": baatsun_context.rule_surface(w["app"], w["title"]) is not None,
+    } for w in windows]
 
 
 def insert_transcript(text, app=None, soft_newlines=False):
@@ -1100,10 +1340,16 @@ def refresh_chord():
         held |= keys
 
     now_held = bool(held & PRIMARY_KEYS) and bool(held & SECONDARY_KEYS)
+    command = bool(held & COMMAND_KEYS)
     if now_held and not hotkey_state["held"]:
         hotkey_state["held"] = True
         hotkey_state["press_time"] = time.monotonic()
-        return on_hotkey_press()
+        return on_hotkey_press(COMMAND if command else DICTATE)
+    if now_held and command and state["recording"] and state["mode"] == DICTATE:
+        # The modifier joined after the chord: still a voice edit.
+        state["mode"] = COMMAND
+        broadcast_state("listening", mode=COMMAND)
+        log("voice edit — the modifier joined mid-recording")
     elif not now_held and hotkey_state["held"]:
         hotkey_state["held"] = False
         return on_hotkey_release()
@@ -1143,7 +1389,7 @@ def forget_device(path):
     start_finishing(pending)
 
 
-def on_hotkey_press():
+def on_hotkey_press(mode=DICTATE):
     """The chord was just formed. Callers already hold state_lock.
 
     Returns a pending transcription for the caller to hand to
@@ -1165,7 +1411,7 @@ def on_hotkey_press():
         # A recording started from the pill or baatsun-toggle is already
         # running; this press joins it, and the release will end it.
         if not state["recording"]:
-            start_recording()
+            start_recording(mode)
         return None
 
     # Clear the latch before deciding anything. If the MAX_RECORDING_SECONDS
@@ -1180,7 +1426,7 @@ def on_hotkey_press():
     # the time a later press arrives.
     if state["recording"]:
         return stop_recording()
-    start_recording()
+    start_recording(mode)
     return None
 
 
@@ -1424,6 +1670,15 @@ class Handler(socketserver.BaseRequestHandler):
         if command == "toggle":
             result = handle_toggle()
             self._reply(result.encode())
+        elif command == "notes":
+            self._reply(handle_notes().encode())
+        elif command == "windows":
+            self._reply(json.dumps(windows_payload()).encode() + b"\n")
+        elif command == "refocus":
+            # After a rule changes, re-announce the focused window so the
+            # GUI's "where it lands" reflects it without a focus change.
+            broadcast(focus_event())
+            self._reply(b"ok")
         elif command == "status":
             self._reply(("recording" if state["recording"] else "idle").encode())
         elif command == "history":
@@ -1510,6 +1765,7 @@ class Handler(socketserver.BaseRequestHandler):
             focus["app"] = app
             focus["title"] = title
         if changed:
+            note_window(app, title)
             broadcast(focus_event())
         self._reply(b"ok")
 
