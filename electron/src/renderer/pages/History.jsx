@@ -68,7 +68,7 @@ function Entry({ entry, onRetype, onDelete }) {
         </div>
       </div>
 
-      <p className="selectable text-[14.5px] leading-relaxed text-ink">{entry.text}</p>
+      <p className="selectable whitespace-pre-line text-[14.5px] leading-relaxed text-ink">{entry.text}</p>
       {error && <p className="mt-1 text-[13px] text-live">{error}</p>}
 
       {entry.raw && (
@@ -76,7 +76,7 @@ function Entry({ entry, onRetype, onDelete }) {
           <summary className="cursor-pointer text-[12.5px] text-faint hover:text-muted">
             Before cleanup
           </summary>
-          <p className="selectable mt-1.5 border-l-2 border-line pl-3 text-[13.5px] leading-relaxed text-muted">
+          <p className="selectable mt-1.5 whitespace-pre-line border-l-2 border-line pl-3 text-[13.5px] leading-relaxed text-muted">
             {entry.raw}
           </p>
         </details>
