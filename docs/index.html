@@ -178,7 +178,7 @@
             <div class="switches">
               <button class="switch" type="button" role="switch" aria-checked="false" data-flow="text">
                 <span class="switch-track"><span class="switch-thumb"></span></span>
-                <span class="switch-text"><b>Clean up with OpenAI</b><span>Sends the transcript text, never audio, and only from windows where you write prose.</span></span>
+                <span class="switch-text"><b>Clean up with OpenAI</b><span>Sends the transcript text, never audio. Edit by voice also sends the text you selected.</span></span>
               </button>
               <button class="switch" type="button" role="switch" aria-checked="false" data-flow="audio">
                 <span class="switch-track"><span class="switch-thumb"></span></span>
@@ -222,21 +222,29 @@
         <div class="bento">
           <article class="tile tile-wide">
             <h3>It works in any app</h3>
-            <p>Text arrives through the clipboard, or through <code>ydotool</code> at the kernel level, so it lands anywhere you can type. Terminals get <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>.</p>
+            <p>Text arrives through the clipboard, or through <code>ydotool</code> at the kernel level, so it lands anywhere you can type. An email gets laid out as an email and a chat stays one line, and if it guesses a window wrong, you can change it.</p>
             <ul class="chips" aria-label="Examples">
               <li>Firefox</li><li>Slack</li><li>Gmail</li><li>VS Code</li><li>Terminal</li><li>Obsidian</li><li>WhatsApp</li><li>LibreOffice</li>
             </ul>
           </article>
           <article class="tile tile-wide">
             <h3>It learns your words</h3>
-            <p>Add names, products and jargon to your vocabulary, and whisper is biased toward them. The cloud backend, if you use it, gets the same list.</p>
+            <p>Add names and jargon to your vocabulary and whisper listens for them. Teach it what it keeps mishearing, and save snippets you can say by name, like “my signature”.</p>
             <ul class="chips chips-vocab" aria-label="Example vocabulary">
               <li>PipeWire</li><li>Kubernetes</li><li>Priya</li><li>Postgres</li><li>systemd</li><li>Wayland</li>
             </ul>
           </article>
+          <article class="tile tile-wide">
+            <h3>Edit by voice</h3>
+            <p>Select some text, hold the hotkey with <kbd>Shift</kbd>, and say what to do: “make this more polite”, “shorter”, “translate to Hindi”. With nothing selected, it writes what you ask for. Said the wrong thing? “Scratch that” takes it back.</p>
+          </article>
+          <article class="tile tile-wide">
+            <h3>Notes from a ramble</h3>
+            <p>Talk for ten minutes and get a summary, the key points, the decisions and who’s doing what. Say “new paragraph” or “bullet point” while you dictate, and the layout follows.</p>
+          </article>
           <article class="tile">
-            <h3>English, or with Hinglish</h3>
-            <p>English uses the fast English-only model. Switch on Hinglish and it loads the multilingual model, so Hindi and Urdu words are heard instead of guessed.</p>
+            <h3>English, Hindi or Urdu</h3>
+            <p>Speak English, Hinglish, Hindi or Urdu, and have it typed in English, Hindi or Urdu. Speak Hindi and get English, or the other way round.</p>
           </article>
           <article class="tile">
             <h3>Long dictations finish fast</h3>
@@ -255,14 +263,16 @@
     <section class="screens" id="screens" aria-labelledby="screens-title">
       <div class="wrap sec-head">
         <h2 class="sec-title" id="screens-title">And a window for everything else</h2>
-        <p class="sec-lede">History you can search, the words you’ve taught it, what it has cost, and every setting.</p>
+        <p class="sec-lede">History you can search, the words you’ve taught it, how each app is treated, and every setting. It updates itself, too.</p>
       </div>
       <div class="reel" id="reel">
         <div class="reel-track" id="reel-track">
-          <figure><img src="assets/home.png" width="1200" height="780" loading="lazy" alt="Home: dictations, words, time saved and a 14-day activity chart" /><figcaption>Home</figcaption></figure>
+          <figure><img src="assets/home.png" width="1200" height="780" loading="lazy" alt="Home: dictations, words, time saved, a 14-day streak and this week’s pace" /><figcaption>Home</figcaption></figure>
           <figure><img src="assets/dictate.png" width="1200" height="780" loading="lazy" alt="Dictate while listening, showing the Slack window the text will land in" /><figcaption>Dictate</figcaption></figure>
-          <figure><img src="assets/history.png" width="1200" height="780" loading="lazy" alt="History grouped by day, with cleaned entries marked and the original kept" /><figcaption>History</figcaption></figure>
-          <figure><img src="assets/settings.png" width="1200" height="780" loading="lazy" alt="Settings: hotkey, activation, transcription engine, language and accuracy" /><figcaption>Settings</figcaption></figure>
+          <figure><img src="assets/history.png" width="1200" height="780" loading="lazy" alt="History with cleaned entries, a snippet and organised notes" /><figcaption>History</figcaption></figure>
+          <figure><img src="assets/words.png" width="1200" height="780" loading="lazy" alt="Words: vocabulary, corrections for misheard words, and snippets" /><figcaption>Words</figcaption></figure>
+          <figure><img src="assets/apps.png" width="1200" height="780" loading="lazy" alt="Apps: recent windows and whether each is treated as email, chat, a post, a document or code" /><figcaption>Apps</figcaption></figure>
+          <figure><img src="assets/settings.png" width="1200" height="780" loading="lazy" alt="Settings: transcription engine, the language you speak and the language to type in" /><figcaption>Settings</figcaption></figure>
         </div>
       </div>
     </section>
