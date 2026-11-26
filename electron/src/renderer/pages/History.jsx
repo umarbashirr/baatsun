@@ -18,15 +18,28 @@ function timeOf(ts) {
 
 function Entry({ entry, onRetype, onDelete }) {
   const [copied, setCopied] = useState(false)
+  const [error, setError] = useState('')
   // Rows unmount on every keystroke in the search box, so this timer outlives
   // its component more often than not.
   const clearLater = useTimer()
 
-  const copy = async () => {
+  // Every action reports its own failure on the row; an unhandled rejection
+  // here used to fail silently.
+  const run = (fn) => async () => {
+    setError('')
+    try {
+      await fn()
+    } catch (err) {
+      setError(err.message || String(err))
+      clearLater(() => setError(''), 4000)
+    }
+  }
+
+  const copy = run(async () => {
     await navigator.clipboard.writeText(entry.text || '')
     setCopied(true)
     clearLater(() => setCopied(false), 1400)
-  }
+  })
 
   return (
     <div className="group px-4 py-3 transition-colors hover:bg-ink-800/50">
@@ -46,16 +59,17 @@ function Entry({ entry, onRetype, onDelete }) {
           <Button size="sm" variant="ghost" onClick={copy}>
             {copied ? 'Copied' : 'Copy'}
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => onRetype(entry.id)}>
-            Type
+          <Button size="sm" variant="ghost" onClick={run(() => onRetype(entry.id))}>
+            Insert
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => onDelete(entry.id)}>
+          <Button size="sm" variant="ghost" onClick={run(() => onDelete(entry.id))}>
             Delete
           </Button>
         </div>
       </div>
 
       <p className="selectable text-[13.5px] leading-relaxed text-ink-200">{entry.text}</p>
+      {error && <p className="mt-1 text-[12px] text-live-500">{error}</p>}
 
       {entry.raw && (
         <details className="mt-2">
@@ -75,6 +89,7 @@ export default function History({ daemon }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
   const [confirmClear, setConfirmClear] = useState(false)
+  const [clearError, setClearError] = useState('')
   const resetConfirmLater = useTimer()
 
   const groups = useMemo(() => {
@@ -125,14 +140,21 @@ export default function History({ daemon }) {
                 resetConfirmLater(() => setConfirmClear(false), 4000)
                 return
               }
-              await daemon.clear()
-              setConfirmClear(false)
+              try {
+                await daemon.clear()
+                setClearError('')
+              } catch (err) {
+                setClearError(`Could not clear history: ${err.message}`)
+              } finally {
+                setConfirmClear(false)
+              }
             }}
           >
             {confirmClear ? 'Really clear all?' : 'Clear'}
           </Button>
         )}
       </div>
+      {clearError && <p className="mb-3 text-[12px] text-live-500">{clearError}</p>}
 
       {total > 0 && (
         <p className="mb-3 text-[12px] text-ink-500">

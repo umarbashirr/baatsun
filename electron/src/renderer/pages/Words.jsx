@@ -11,11 +11,20 @@ import { useTimer } from '../lib/useTimer.js'
  * decoder's initial_prompt, the ElevenLabs keyterms and the cleanup prompt all
  * keep reading the field they already read.
  */
-const toList = (value) =>
-  (value || '')
+// De-duplicated (case-insensitively), because each chip is keyed by its term:
+// a hand-edited "Foo, Foo" would collide, and removing one removed both.
+const toList = (value) => {
+  const seen = new Set()
+  return (value || '')
     .split(',')
     .map((term) => term.trim())
-    .filter(Boolean)
+    .filter((term) => {
+      const key = term.toLowerCase()
+      if (!term || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
 
 const toField = (list) => list.join(', ')
 
@@ -24,6 +33,7 @@ export default function Words() {
   const [draft, setDraft] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
   const clearSavingLater = useTimer()
 
   useEffect(() => {
@@ -35,10 +45,16 @@ export default function Words() {
   }, [])
 
   const persist = async (next) => {
+    const previous = terms
     setTerms(next)
     setSaving(true)
+    setError('')
     try {
       await window.baatsun.saveConfig({ config: { vocabulary: toField(next) } })
+    } catch (err) {
+      // Put the chips back to what is actually on disk.
+      setTerms(previous)
+      setError(`Could not save: ${err.message}`)
     } finally {
       // Brief, but it is the only confirmation that a chip edit reached disk.
       clearSavingLater(() => setSaving(false), 500)
@@ -88,8 +104,9 @@ export default function Words() {
         </div>
         <p className="mt-2 text-[11.5px] text-ink-500">
           {terms.length} term{terms.length === 1 ? '' : 's'}
-          {saving && ' · saved'}
+          {saving && !error && ' · saved'}
         </p>
+        {error && <p className="mt-1 text-[12px] text-live-500">{error}</p>}
       </Card>
 
       {loaded && terms.length === 0 ? (

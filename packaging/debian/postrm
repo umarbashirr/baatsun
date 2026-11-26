@@ -7,6 +7,11 @@ set -e
 case "$1" in
     remove|purge)
         rm -rf /opt/baatsun
+        # dpkg cannot stop per-user services. Say what is left behind.
+        echo "baatsun: removed. Each user who enabled it should also run:"
+        echo "  systemctl --user disable --now baatsun baatsun-ydotoold"
+        echo "  (optional) sudo gpasswd -d \"\$USER\" input"
+        echo "Settings and history are kept in ~/.config/baatsun and ~/.local/share/baatsun."
         ;;
 esac
 

@@ -82,7 +82,14 @@ function subscribe(onEvent, onStatus) {
     socket = net.connect({ path: SOCKET_PATH })
     let buffer = ''
 
-    socket.on('connect', () => onStatus({ connected: true }))
+    socket.on('connect', () => {
+      // The daemon reads a command off every new connection before it does
+      // anything else, so without this the socket sat open, "connected", and
+      // never received a single event: no live state, no new transcripts, no
+      // deletions.
+      socket.write('subscribe')
+      onStatus({ connected: true })
+    })
     socket.on('data', (chunk) => {
       buffer += chunk.toString('utf8')
       // Events are newline-delimited and can arrive several to a chunk, or
@@ -127,6 +134,20 @@ function subscribe(onEvent, onStatus) {
   }
 }
 
+/** A command whose only success reply is "ok"; anything else is an error. */
+async function expectOk(command) {
+  const reply = await request(command)
+  if (reply !== 'ok') {
+    const reasons = {
+      not_found: 'That transcript no longer exists.',
+      bad_id: 'Invalid transcript id.',
+      insert_failed: 'Could not paste or type into the focused window.',
+    }
+    throw new Error(reasons[reply] || `daemon replied "${reply}"`)
+  }
+  return reply
+}
+
 module.exports = {
   SOCKET_PATH,
   request,
@@ -135,7 +156,7 @@ module.exports = {
   status: () => request('status'),
   history: () => request('history', { expectJson: true }),
   cost: () => request('cost', { expectJson: true }),
-  clear: () => request('clear'),
-  remove: (id) => request(`delete ${id}`),
-  retype: (id) => request(`retype ${id}`),
+  clear: () => expectOk('clear'),
+  remove: (id) => expectOk(`delete ${id}`),
+  retype: (id) => expectOk(`retype ${id}`),
 }

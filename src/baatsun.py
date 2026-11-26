@@ -24,6 +24,7 @@ from evdev import InputDevice, ecodes, list_devices
 
 import baatsun_cleanup
 import baatsun_context
+import baatsun_insert
 import baatsun_stt
 from baatsun_config import (
     ACTIVATION_CHOICES,
@@ -34,6 +35,7 @@ from baatsun_config import (
     load_api_key,
     load_config,
     load_stt_api_key,
+    resolve_beam_size,
     resolve_model,
     resolve_stt_backend,
 )
@@ -47,7 +49,18 @@ COMPUTE_TYPE = os.environ.get("BAATSUN_COMPUTE_TYPE") or config["compute_type"]
 # The Settings panel restarts the daemon when this changes, the same way it
 # does for the model.
 STT_BACKEND = os.environ.get("BAATSUN_STT_BACKEND") or resolve_stt_backend(config)
-SOCKET_PATH = f"/run/user/{os.getuid()}/baatsun.sock"
+# Read once: the model is loaded for it (see resolve_model).
+HINGLISH = bool(config.get("hinglish"))
+# Pinned to English even for Hinglish — see baatsun_stt.transcribe: unpinned,
+# Scribe writes the Hindi parts in Devanagari, and the output here is English.
+SCRIBE_LANGUAGE = WHISPER_LANGUAGE
+# Same path every other component uses: $XDG_RUNTIME_DIR, which systemd sets
+# to /run/user/$UID for a user service.
+SOCKET_PATH = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}", "baatsun.sock")
+# Transcripts stay out of the journal unless you ask for them: the journal
+# outlives "Clear history", and the README promises nothing else is kept.
+LOG_TRANSCRIPTS = os.environ.get("BAATSUN_LOG_TRANSCRIPTS") == "1"
 SAMPLE_RATE = "16000"
 
 KEY_GROUPS = {
@@ -214,9 +227,15 @@ def load_history():
 
 
 def save_history():
-    os.makedirs(HISTORY_DIR, exist_ok=True)
+    # 0700 / 0600 like the API keys: this is everything you have ever said.
+    os.makedirs(HISTORY_DIR, mode=0o700, exist_ok=True)
     tmp_path = HISTORY_PATH + ".tmp"
-    with open(tmp_path, "w") as f:
+    try:
+        os.remove(tmp_path)
+    except OSError:
+        pass
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump(history, f)
     os.replace(tmp_path, HISTORY_PATH)
 
@@ -440,20 +459,27 @@ class LiveScribe:
                 pass
 
     def collect(self):
-        """Join in-flight slices and the leftover tail. Returns (text, usage)."""
+        """Join in-flight slices and the leftover tail.
+
+        Returns (text, usage, failed), where failed counts slices that came
+        back with nothing. The caller keeps the wav when any did: a transcript
+        with a 20-second hole in it must not be the only copy of what was said.
+        """
         self.stop.set()
         if self.thread is not None:
             self.thread.join(timeout=5)
         self._drain(final=True)
         texts = []
         usages = []
+        failed = 0
         with self.lock:
             jobs = list(self.jobs)
         for thread, box, chunk_path in jobs:
             thread.join()
             if box.get("text"):
                 texts.append(box["text"].strip())
-            elif "text" in box:
+            else:
+                failed += 1
                 log(f"elevenlabs chunk {box.get('n')} returned no text")
             if box.get("usage"):
                 usages.append(box["usage"])
@@ -461,7 +487,8 @@ class LiveScribe:
                 os.remove(chunk_path)
             except OSError:
                 pass
-        return " ".join(part for part in texts if part), _merge_scribe_usage(usages)
+        return (" ".join(part for part in texts if part),
+                _merge_scribe_usage(usages), failed)
 
     def _watch(self):
         for _ in range(40):
@@ -532,11 +559,15 @@ class LiveScribe:
 
     def _run(self, chunk_path, seconds, box, n):
         usage = {}
-        text = baatsun_stt.transcribe(
-            chunk_path, load_stt_api_key(),
-            language=WHISPER_LANGUAGE,
-            vocabulary=load_config().get("vocabulary") or "",
-            log=log, seconds=seconds, usage=usage)
+        try:
+            text = baatsun_stt.transcribe(
+                chunk_path, load_stt_api_key(),
+                language=SCRIBE_LANGUAGE,
+                vocabulary=load_config().get("vocabulary") or "",
+                log=log, seconds=seconds, usage=usage)
+        except Exception as exc:  # noqa: BLE001 — a dead slice must not hang collect()
+            log(f"elevenlabs chunk {n} crashed: {type(exc).__name__}: {exc}")
+            text = None
         box["text"] = text
         box["usage"] = usage
         if text:
@@ -546,19 +577,38 @@ class LiveScribe:
 
 
 def start_recording():
+    """Start a recording. Callers hold state_lock. Returns True if one started.
+
+    Refuses when one is already running: overwriting state here would orphan
+    the running pw-record (mic held open, /tmp filling) and, on ElevenLabs, a
+    LiveScribe that keeps uploading — and billing — slices forever.
+    """
+    if state["recording"] or state["proc"] is not None:
+        return False
     fd, wav_path = tempfile.mkstemp(prefix="baatsun-", suffix=".wav")
     os.close(fd)
-    proc = subprocess.Popen(
-        [
-            "pw-record",
-            "--format=s16",
-            f"--rate={SAMPLE_RATE}",
-            "--channels=1",
-            wav_path,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    try:
+        proc = subprocess.Popen(
+            [
+                "pw-record",
+                "--format=s16",
+                f"--rate={SAMPLE_RATE}",
+                "--channels=1",
+                wav_path,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        # Raised inside a keyboard watcher, this used to be read as "lost
+        # keyboard device" and kill the watcher.
+        log(f"could not start pw-record: {exc} — is PipeWire installed?")
+        try:
+            os.remove(wav_path)
+        except OSError:
+            pass
+        broadcast_state("idle", reason="mic_failed")
+        return False
     state["recording"] = True
     state["proc"] = proc
     state["wav_path"] = wav_path
@@ -577,6 +627,7 @@ def start_recording():
     timer.start()
     broadcast_state("listening")
     log(f"recording started -> {wav_path}")
+    return True
 
 
 def cancel_recording_timer():
@@ -658,7 +709,8 @@ def maybe_clean(text, app, title):
     if cleaned is None:
         return text, usage
     if cleaned != text:
-        log(f"cleaned for {surface}: {cleaned!r}")
+        log(f"cleaned for {surface}: {cleaned!r}" if LOG_TRANSCRIPTS
+            else f"cleaned for {surface} ({len(cleaned)} chars)")
     return cleaned, usage
 
 
@@ -725,6 +777,14 @@ def finish_recording(pending):
     proc, wav_path, secs, capture = pending
     try:
         _finish_recording(proc, wav_path, secs, capture)
+    except Exception as exc:  # noqa: BLE001
+        # Without this an unexpected error killed the thread silently: the
+        # wav was deleted by the finally below, nothing was typed or saved,
+        # and every UI sat on "transcribing" until the next dictation.
+        import traceback
+        log(f"dictation failed: {type(exc).__name__}: {exc}")
+        traceback.print_exc(file=sys.stderr)
+        broadcast_state("idle", reason="failed")
     finally:
         with state_lock:
             state["finishing"] = False
@@ -761,13 +821,18 @@ def _finish_recording(proc, wav_path, secs, capture):
         # local dictation you ever made at cloud rates the moment you switch.
         stt_usage = {}
         if STT_BACKEND == "elevenlabs":
+            failed_slices = 0
             if capture is not None:
-                text, stt_usage = capture.collect()
+                text, stt_usage, failed_slices = capture.collect()
             else:
                 text = baatsun_stt.transcribe(
                     wav_path, load_stt_api_key(),
-                    language=WHISPER_LANGUAGE, vocabulary=vocabulary, log=log,
+                    language=SCRIBE_LANGUAGE, vocabulary=vocabulary, log=log,
                     seconds=secs, usage=stt_usage)
+            if text and failed_slices:
+                keep_wav = True
+                log(f"{failed_slices} slice(s) failed, so the transcript has gaps; "
+                    f"the full recording has been kept at {wav_path}")
             if not text:
                 keep_wav = True
                 log(f"the recording has been kept at {wav_path} — "
@@ -779,11 +844,26 @@ def _finish_recording(proc, wav_path, secs, capture):
             # mangle ("Claude" heard as "cloud"). Cheaper and far more reliable
             # than asking the cleanup model to spot the mistake afterwards, and
             # it works even with cleanup switched off.
+            #
+            # beam_size: greedy decoding (1) was the main source of misheard
+            # words; whisper's accuracy figures are all quoted at 5.
+            # vad_filter: skip the silence before, between and after speech.
+            # Less audio to decode (faster), and silence is where whisper
+            # hallucinates "Thank you." and repeated lines.
+            # condition_on_previous_text off: stops one misheard segment from
+            # steering every one after it, and the repetition loops that come
+            # with it.
+            # without_timestamps: we never use them, and predicting them costs
+            # decoder steps.
             segments, _info = model.transcribe(
                 wav_path,
                 language=WHISPER_LANGUAGE,
-                beam_size=1,
+                beam_size=resolve_beam_size(load_config()),
                 initial_prompt=vocabulary or None,
+                vad_filter=True,
+                vad_parameters={"min_silence_duration_ms": 500, "speech_pad_ms": 300},
+                condition_on_previous_text=False,
+                without_timestamps=True,
             )
             text = "".join(seg.text for seg in segments).strip()
             # Written rather than left out, so the cost report can tell a
@@ -795,7 +875,8 @@ def _finish_recording(proc, wav_path, secs, capture):
             broadcast_state("idle", reason="empty")
             return
 
-        log(f"transcript: {text!r}")
+        log(f"transcript: {text!r}" if LOG_TRANSCRIPTS
+            else f"transcript ready ({len(text.split())} words)")
         # Read the focused window once and use it for both decisions. Two
         # separate reads could disagree if the user switched windows mid-
         # cleanup, and an entry that says "verbatim" about text that was in
@@ -806,17 +887,43 @@ def _finish_recording(proc, wav_path, secs, capture):
 
         raw = text
         text, usage = maybe_clean(text, app, title)
-        subprocess.run(["ydotool", "type", "--", text], check=False)
+        # Enter sends in a chat window and runs a command in a terminal, so
+        # no newline reaches either, whatever the cleanup model returned.
+        if not baatsun_context.allows_line_breaks(app, title):
+            text = " ".join(text.split())
+        inserted, how = insert_transcript(text, app)
         entry = add_history_entry(text, raw, app=app, context=context,
                                   secs=secs, usage=usage, stt=stt_usage)
         broadcast({"type": "transcript", "entry": entry})
-        broadcast_state("idle")
+        if inserted:
+            broadcast_state("idle")
+        else:
+            # Saved in history either way, so it can be copied from there.
+            broadcast_state("idle", reason="insert_failed", error=how)
+    except Exception:
+        # Whatever failed, the audio is the only copy of what was said.
+        keep_wav = True
+        log(f"the recording has been kept at {wav_path}")
+        raise
     finally:
         if not keep_wav:
             try:
                 os.remove(wav_path)
             except OSError:
                 pass
+
+
+def insert_transcript(text, app=None):
+    """Paste or type text into the focused window. Returns (ok, how/error)."""
+    method = load_config().get("insert_method") or "paste"
+    ok, how = baatsun_insert.insert(text, app=app, method=method, log=log)
+    if ok:
+        log(f"inserted ({how})")
+    else:
+        log(f"could not insert the transcript: {how} — it is in History. "
+            "With ydotool 1.x, ydotoold must be running "
+            "(systemctl --user enable --now baatsun-ydotoold)")
+    return ok, how
 
 
 def abandon_recording():
@@ -878,8 +985,7 @@ def handle_toggle():
             # window; the caller gets told rather than silently ignored.
             return "busy"
         else:
-            start_recording()
-            return "started"
+            return "started" if start_recording() else "mic_failed"
     start_finishing(pending)
     return "stopped"
 
@@ -1008,7 +1114,10 @@ def on_hotkey_press():
         return None
 
     if ACTIVATION == "hold":
-        start_recording()
+        # A recording started from the pill or baatsun-toggle is already
+        # running; this press joins it, and the release will end it.
+        if not state["recording"]:
+            start_recording()
         return None
 
     # Clear the latch before deciding anything. If the MAX_RECORDING_SECONDS
@@ -1266,13 +1375,13 @@ class Handler(socketserver.BaseRequestHandler):
             arg = self._await_focus_payload(arg)
         if command == "toggle":
             result = handle_toggle()
-            self.request.sendall(result.encode())
+            self._reply(result.encode())
         elif command == "status":
-            self.request.sendall(("recording" if state["recording"] else "idle").encode())
+            self._reply(("recording" if state["recording"] else "idle").encode())
         elif command == "history":
             with history_lock:
                 payload = json.dumps(history)
-            self.request.sendall(payload.encode() + b"\n")
+            self._reply(payload.encode() + b"\n")
         elif command == "cost":
             # Snapshot the list under the lock and total it outside: this walks
             # every entry several times over, and the history lock is also held
@@ -1280,11 +1389,11 @@ class Handler(socketserver.BaseRequestHandler):
             with history_lock:
                 entries = list(history)
             payload = json.dumps(compute_cost(entries))
-            self.request.sendall(payload.encode() + b"\n")
+            self._reply(payload.encode() + b"\n")
         elif command == "clear":
             clear_history()
             broadcast({"type": "history_cleared"})
-            self.request.sendall(b"ok")
+            self._reply(b"ok")
         elif command == "delete":
             self.handle_delete(arg)
         elif command == "retype":
@@ -1294,7 +1403,7 @@ class Handler(socketserver.BaseRequestHandler):
         elif command == "subscribe":
             self.handle_subscribe()
         else:
-            self.request.sendall(b"unknown command")
+            self._reply(b"unknown command")
 
     def _await_focus_payload(self, arg):
         """Wait for the rest of a focus payload that arrived in pieces.
@@ -1373,26 +1482,28 @@ class Handler(socketserver.BaseRequestHandler):
         try:
             entry_id = int(arg)
         except ValueError:
-            self.request.sendall(b"bad_id")
+            self._reply(b"bad_id")
             return
         if delete_history_entry(entry_id):
             broadcast({"type": "deleted", "id": entry_id})
-            self.request.sendall(b"ok")
+            self._reply(b"ok")
         else:
-            self.request.sendall(b"not_found")
+            self._reply(b"not_found")
 
     def handle_retype(self, arg):
         try:
             entry_id = int(arg)
         except ValueError:
-            self.request.sendall(b"bad_id")
+            self._reply(b"bad_id")
             return
         entry = find_history_entry(entry_id)
         if entry is None:
-            self.request.sendall(b"not_found")
+            self._reply(b"not_found")
             return
-        subprocess.run(["ydotool", "type", "--", entry["text"]], check=False)
-        self.request.sendall(b"ok")
+        with focus_lock:
+            app = focus["app"]
+        ok, _how = insert_transcript(entry["text"], app)
+        self._reply(b"ok" if ok else b"insert_failed")
 
     def handle_subscribe(self):
         # Bound how long a send to this client can block, because broadcast()
@@ -1409,21 +1520,24 @@ class Handler(socketserver.BaseRequestHandler):
             socket.SOL_SOCKET, socket.SO_SNDTIMEO,
             struct.pack("ll", SUBSCRIBER_SEND_TIMEOUT, 0))
 
+        # Bring the newcomer up to date before it starts waiting for changes.
+        # Done under subscribers_lock, together with joining the list, so no
+        # broadcast can land between the snapshot and the send — otherwise a
+        # "listening" sent in that gap would be overwritten by a stale "idle".
+        # A failure here means the client vanished between connecting and
+        # now, which the read loop below is about to notice anyway.
+        focus_payload = focus_event()
         with subscribers_lock:
             subscribers.append(self.request)
-        log(f"gui subscriber connected ({len(subscribers)} total)")
-
-        # Bring the newcomer up to date before it starts waiting for changes.
-        # Sent only to this socket: everyone else already knows. A failure here
-        # means the client vanished between connecting and now, which the read
-        # loop below is about to notice anyway.
-        try:
-            with current_state_lock:
-                opening = dict(current_state)
-            for event in (opening, focus_event()):
-                self.request.sendall((json.dumps(event) + "\n").encode())
-        except OSError:
-            pass
+            count = len(subscribers)
+            try:
+                with current_state_lock:
+                    opening = dict(current_state)
+                for event in (opening, focus_payload):
+                    self.request.sendall((json.dumps(event) + "\n").encode())
+            except OSError:
+                pass
+        log(f"gui subscriber connected ({count} total)")
 
         try:
             # Block until the client disconnects; broadcast() pushes events
@@ -1467,10 +1581,14 @@ def main():
 
         # faster-whisper fetches the model into ~/.cache/huggingface on first
         # use; after that this is a local load.
-        log(f"loading model {MODEL_SIZE} ({COMPUTE_TYPE}, cpu)...")
+        # Every core but one (capped): ctranslate2's own default is 4 threads,
+        # which leaves most of a modern CPU idle while you wait.
+        threads = max(1, min(8, (os.cpu_count() or 4) - 1))
+        log(f"loading model {MODEL_SIZE} ({COMPUTE_TYPE}, cpu, {threads} threads"
+            f"{', Hinglish' if HINGLISH else ''})...")
         try:
             model = WhisperModel(MODEL_SIZE, device="cpu",
-                                 compute_type=COMPUTE_TYPE)
+                                 compute_type=COMPUTE_TYPE, cpu_threads=threads)
         except Exception as exc:
             # Starting anyway would leave a daemon whose hotkey silently does
             # nothing. Exit instead, with the reason on one readable line above
@@ -1481,6 +1599,15 @@ def main():
                 "local model")
             raise
         log("model loaded")
+        # Warm up once so the first real dictation doesn't also pay for
+        # ctranslate2's lazy initialisation.
+        try:
+            import numpy as np
+            list(model.transcribe(np.zeros(16000, dtype=np.float32),
+                                  language=WHISPER_LANGUAGE, beam_size=1,
+                                  without_timestamps=True)[0])
+        except Exception as exc:  # noqa: BLE001 — warm-up is best effort
+            log(f"warm-up skipped: {exc}")
 
     start_hotkey_listener()
 

@@ -32,7 +32,8 @@ except ValueError:
 
 from gi.repository import GLib, Gtk  # noqa: E402
 
-SOCKET_PATH = f"/run/user/{os.getuid()}/baatsun.sock"
+SOCKET_PATH = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}", "baatsun.sock")
 
 # The launcher rather than the app directly: it is the one place that knows
 # where the window is installed, which electron to use, and which sandbox and
@@ -55,6 +56,9 @@ def send_command(command):
             sock.settimeout(2)
             sock.connect(SOCKET_PATH)
             sock.sendall(command.encode())
+            # Read the reply rather than hanging up on it, so the daemon's
+            # answer doesn't hit a closed socket.
+            sock.recv(64)
     except OSError:
         pass
 
@@ -79,7 +83,7 @@ def quit_tray(*_args):
 def build_menu(indicator):
     menu = Gtk.Menu()
 
-    show_item = Gtk.MenuItem(label="Show History")
+    show_item = Gtk.MenuItem(label="Open Baatsun")
     show_item.connect("activate", show_history)
     menu.append(show_item)
 

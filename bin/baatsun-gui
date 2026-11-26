@@ -11,6 +11,7 @@ an installed tree under /opt/baatsun, and a git checkout being run in place.
 """
 import os
 import shutil
+import subprocess
 import sys
 
 INSTALLED_APP = "/opt/baatsun/electron"
@@ -36,27 +37,36 @@ def find_electron():
     return shutil.which("electron")
 
 
+def fail(message):
+    """Report a launch failure where it can be seen.
+
+    Launched from the app menu or the tray there is no terminal, so stderr
+    alone meant clicking the icon just did nothing. A desktop notification
+    says why.
+    """
+    print(f"baatsun-gui: {message}", file=sys.stderr)
+    notify = shutil.which("notify-send")
+    if notify:
+        try:
+            subprocess.run([notify, "--app-name=Baatsun", "-i", "dialog-error",
+                            "Baatsun could not open", message],
+                           check=False, timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return 1
+
+
 def main():
     if not os.path.isdir(APP_DIR):
-        print(f"baatsun-gui: no application window found at {APP_DIR}", file=sys.stderr)
-        return 1
+        return fail(f"no application window found at {APP_DIR}")
 
     if not os.path.exists(os.path.join(APP_DIR, "dist", "index.html")):
-        print(
-            "baatsun-gui: the window has not been built yet. Run:\n"
-            f"  cd {APP_DIR} && npm install && npm run build",
-            file=sys.stderr,
-        )
-        return 1
+        return fail("the window has not been built yet. Run:\n"
+                    f"  cd {APP_DIR} && npm install && npm run build")
 
     electron = find_electron()
     if not electron:
-        print(
-            "baatsun-gui: electron is not installed. Run:\n"
-            f"  cd {APP_DIR} && npm install",
-            file=sys.stderr,
-        )
-        return 1
+        return fail(f"electron is not installed. Run:\n  cd {APP_DIR} && npm install")
 
     argv = [electron, APP_DIR, f"--class={WM_CLASS}"]
 
@@ -64,8 +74,9 @@ def main():
     # AppArmor user-namespace policy: Electron exits before it creates a
     # window, and a .desktop launch has nowhere to print that. This window
     # loads no remote content (see the CSP in src/renderer/index.html), so
-    # refusing to start is worse than starting unsandboxed. postinst still
-    # marks chrome-sandbox 4755 for anyone who launches the binary directly.
+    # refusing to start is worse than starting unsandboxed — which is also why
+    # postinst no longer installs chrome-sandbox setuid root: it would be a
+    # setuid binary nothing uses.
     argv.append("--no-sandbox")
 
     # Wayland-native where the session is Wayland, XWayland otherwise. Left to

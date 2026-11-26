@@ -1,0 +1,15 @@
+[Unit]
+Description=ydotool daemon for baatsun (types and pastes transcripts)
+Documentation=https://github.com/umarbashirr/baatsun#readme
+# Only ydotool 1.x has a daemon; with 0.1.x this unit is skipped harmlessly.
+ConditionPathExists=/usr/bin/ydotoold
+
+[Service]
+# Runs as you, so the socket it creates is yours. Needs write access to
+# /dev/uinput, which the 60-ydotool udev rule grants to the input group.
+ExecStart=/usr/bin/ydotoold
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

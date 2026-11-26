@@ -8,6 +8,17 @@ REQUIREMENTS=/opt/baatsun/requirements.txt
 
 case "$1" in
     configure)
+        # Rebuild after a Python minor upgrade (3.12 -> 3.13): the venv's
+        # python3 symlink still resolves, but it now looks in a site-packages
+        # directory that is empty, and the daemon dies on "No module evdev".
+        SYS_PY="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+        if [ -x "$VENV/bin/python3" ]; then
+            VENV_PY="$("$VENV/bin/python3" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
+            if [ "$VENV_PY" != "$SYS_PY" ]; then
+                echo "baatsun: Python changed (${VENV_PY:-unknown} -> $SYS_PY); rebuilding the virtualenv ..."
+                rm -rf "$VENV"
+            fi
+        fi
         if [ ! -x "$VENV/bin/python3" ]; then
             echo "baatsun: creating virtualenv at $VENV ..."
             python3 -m venv "$VENV"
@@ -30,7 +41,16 @@ case "$1" in
         # is a package Depends for that). Keep pip's output visible: the
         # wheels are large, and --quiet made a missing Python.h look like apt
         # had hung and then failed with no cause.
-        if ! "$VENV/bin/pip" install --require-virtualenv -r "$REQUIREMENTS"; then
+        #
+        # --no-build-isolation: otherwise pip fetches the *latest* setuptools
+        # from PyPI into a throwaway build env to compile evdev, and runs it as
+        # root — the unpinned exposure requirements.txt exists to remove. The
+        # pinned setuptools goes in first and builds it instead.
+        SETUPTOOLS_PIN="$(grep -E '^setuptools==' "$REQUIREMENTS" || true)"
+        if [ -n "$SETUPTOOLS_PIN" ]; then
+            "$VENV/bin/pip" install --require-virtualenv "$SETUPTOOLS_PIN"
+        fi
+        if ! "$VENV/bin/pip" install --require-virtualenv --no-build-isolation -r "$REQUIREMENTS"; then
             echo "baatsun: failed to install Python dependencies into $VENV." >&2
             echo "         evdev has to be compiled; install python3-dev and retry:" >&2
             echo "           sudo apt install -y python3-dev && sudo dpkg --configure -a" >&2
@@ -39,14 +59,12 @@ case "$1" in
 
         chmod -R a+rX /opt/baatsun
 
-        # Chromium refuses to start unsandboxed unless told to, and its setuid
-        # helper only works owned by root with the setuid bit set. Doing it here
-        # is what lets baatsun-gui run the window *with* its sandbox; without
-        # this the launcher falls back to --no-sandbox.
+        # The window always runs with --no-sandbox (see bin/baatsun-gui), so
+        # Chromium's helper must NOT be setuid root: that would be a root
+        # binary from npm that nothing ever uses. Older releases set it; undo.
         SANDBOX=/opt/baatsun/electron/node_modules/electron/dist/chrome-sandbox
         if [ -f "$SANDBOX" ]; then
-            chown root:root "$SANDBOX"
-            chmod 4755 "$SANDBOX"
+            chmod 0755 "$SANDBOX"
         fi
 
         udevadm control --reload-rules >/dev/null 2>&1 || true
@@ -84,6 +102,9 @@ case "$1" in
             STEP=$((STEP + 1))
         fi
         echo "  $STEP. Run: systemctl --user enable --now baatsun"
+        STEP=$((STEP + 1))
+        echo "  $STEP. Open the app from your launcher (search 'Baatsun'), the tray icon,"
+        echo "     or right-click the pill. Dictation itself needs no window open."
         echo ""
         echo "The pill (the bottom-centre recording indicator) autostarts on next"
         echo "login; run 'baatsun-pill' now to bring it up immediately. On GNOME"

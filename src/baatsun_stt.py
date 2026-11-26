@@ -180,8 +180,11 @@ def transcribe(wav_path, api_key, language="en", vocabulary="", log=None,
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         _report(log, f"transcription unreachable: {exc}")
         return None
-    except ValueError as exc:
+    except (ValueError, AttributeError, TypeError) as exc:
         _report(log, f"transcription returned an unusable response: {exc}")
+        return None
+    except Exception as exc:  # noqa: BLE001 — e.g. http.client.IncompleteRead
+        _report(log, f"transcription failed: {type(exc).__name__}: {exc}")
         return None
 
     if not text:

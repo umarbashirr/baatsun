@@ -93,12 +93,19 @@ function Activity({ activity }) {
 
 export default function Home({ daemon, onNavigate }) {
   const [name, setName] = useState('')
-  const stats = useMemo(() => computeStats(daemon.entries), [daemon.entries])
+  const [cleanupModel, setCleanupModel] = useState('gpt-4o-mini')
+  const stats = useMemo(
+    () => computeStats(daemon.entries, cleanupModel),
+    [daemon.entries, cleanupModel],
+  )
 
   useEffect(() => {
     window.baatsun
       .loadConfig()
-      .then(({ config }) => setName((config.display_name || '').trim()))
+      .then(({ config }) => {
+        setName((config.display_name || '').trim())
+        setCleanupModel(config.cleanup_model || 'gpt-4o-mini')
+      })
       .catch(() => setName(''))
   }, [])
 

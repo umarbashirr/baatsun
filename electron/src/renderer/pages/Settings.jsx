@@ -5,7 +5,15 @@ import { useTimer } from '../lib/useTimer.js'
 // Changing any of these means the daemon has to come back up: they are read
 // once at startup, and stt_backend in particular decides whether the local
 // model is loaded into memory at all. Everything else is re-read per dictation.
-const RESTART_KEYS = ['hotkey', 'activation', 'model_override', 'stt_backend']
+// compute_type and hinglish both decide which model is loaded.
+const RESTART_KEYS = [
+  'hotkey',
+  'activation',
+  'model_override',
+  'stt_backend',
+  'compute_type',
+  'hinglish',
+]
 
 const HOTKEY_LABELS = {
   'ctrl+super': 'Ctrl + Super',
@@ -23,7 +31,12 @@ const BACKEND_LABELS = {
   elevenlabs: 'ElevenLabs Scribe v2 (cloud)',
 }
 const SCOPE_LABELS = { prose: 'Prose windows only', all: 'Everything I dictate' }
-const STRENGTH_LABELS = { grammar: 'Grammar only', natural: 'Natural English' }
+const STRENGTH_LABELS = { grammar: 'Proofread only', natural: 'Proofread + light grammar' }
+const BEAM_LABELS = { 1: 'Fastest (least accurate)', 3: 'Balanced', 5: 'Most accurate' }
+const INSERT_LABELS = {
+  paste: 'Paste (instant, restores your clipboard)',
+  type: 'Type key by key (slower)',
+}
 
 const opts = (values, labels) =>
   values.map((v) => ({ value: v, label: labels?.[v] || v }))
@@ -35,15 +48,20 @@ const opts = (values, labels) =>
  * checked before committing to it — and neither probe costs anything, because
  * both hit a listing endpoint rather than doing real work.
  */
-function KeyField({ label, hint, provider, value, onChange, placeholder }) {
+function KeyField({ label, hint, provider, status, value, onChange, placeholder }) {
   const [result, setResult] = useState(null)
   const [testing, setTesting] = useState(false)
+  // value is null while the saved key is untouched, '' once it is marked for
+  // removal, and the new key otherwise. The saved key itself is never here.
+  const typed = value || ''
+  const removing = value === ''
+  const hasSaved = status?.set && !removing
 
   const test = async () => {
     setTesting(true)
     setResult(null)
     try {
-      setResult(await window.baatsun.verifyKey(provider, value.trim()))
+      setResult(await window.baatsun.verifyKey(provider, typed.trim()))
     } catch (err) {
       setResult({ ok: false, message: err.message })
     } finally {
@@ -60,6 +78,8 @@ function KeyField({ label, hint, provider, value, onChange, placeholder }) {
             {result.ok ? '✓ ' : '✗ '}
             {result.message}
           </span>
+        ) : status?.fromEnv ? (
+          'Set by an environment variable, which overrides anything saved here'
         ) : (
           hint
         )
@@ -68,17 +88,24 @@ function KeyField({ label, hint, provider, value, onChange, placeholder }) {
       <div className="flex gap-2">
         <TextInput
           type="password"
-          value={value}
+          value={typed}
           onChange={(e) => {
-            onChange(e.target.value)
+            onChange(e.target.value === '' ? null : e.target.value)
             setResult(null)
           }}
-          placeholder={placeholder}
+          placeholder={
+            removing ? 'Will be removed on save' : hasSaved ? `Saved (…${status.hint})` : placeholder
+          }
           className="w-[190px] font-mono"
         />
-        <Button size="md" onClick={test} disabled={testing || !value.trim()}>
+        <Button size="md" onClick={test} disabled={testing || (!typed.trim() && !hasSaved)}>
           {testing ? '…' : 'Test'}
         </Button>
+        {status?.set && !status.fromEnv && !typed && (
+          <Button size="md" variant="ghost" onClick={() => onChange(removing ? null : '')}>
+            {removing ? 'Keep' : 'Remove'}
+          </Button>
+        )}
       </div>
     </Field>
   )
@@ -89,36 +116,61 @@ export default function Settings() {
   const [cfg, setCfg] = useState(null)
   const [choices, setChoices] = useState({})
   const [defaultModel, setDefaultModel] = useState('small.en')
-  const [openaiKey, setOpenaiKey] = useState('')
-  const [sttKey, setSttKey] = useState('')
+  const [multilingualModel, setMultilingualModel] = useState('small')
+  const [keys, setKeys] = useState({})
+  // null = unchanged; see KeyField.
+  const [openaiKey, setOpenaiKey] = useState(null)
+  const [sttKey, setSttKey] = useState(null)
+  const [loadError, setLoadError] = useState('')
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
   // Both toast sites share one timer, so a restart toast can't be cleared
   // early by a save toast's leftover timeout.
   const clearToastLater = useTimer()
 
+  const load = () =>
+    window.baatsun
+      .loadConfig()
+      .then((payload) => {
+        setCfg(payload.config)
+        setInitial(payload.config)
+        setChoices(payload.choices)
+        setDefaultModel(payload.defaultModel)
+        setMultilingualModel(payload.multilingualModel || 'small')
+        setKeys(payload.keys || {})
+        setOpenaiKey(null)
+        setSttKey(null)
+        setLoadError('')
+      })
+      .catch((err) => setLoadError(err.message))
+
   useEffect(() => {
-    window.baatsun.loadConfig().then((payload) => {
-      setCfg(payload.config)
-      setInitial(payload.config)
-      setChoices(payload.choices)
-      setDefaultModel(payload.defaultModel)
-      setOpenaiKey(payload.openaiKey)
-      setSttKey(payload.sttKey)
-    })
+    load()
   }, [])
 
+  const keysEdited = openaiKey !== null || sttKey !== null
   const dirty = useMemo(
-    () => initial && cfg && JSON.stringify(initial) !== JSON.stringify(cfg),
-    [initial, cfg],
+    () =>
+      initial && cfg && (JSON.stringify(initial) !== JSON.stringify(cfg) || keysEdited),
+    [initial, cfg, keysEdited],
   )
   const needsRestart = useMemo(
-    () => initial && cfg && RESTART_KEYS.some((k) => initial[k] !== cfg[k]),
-    [initial, cfg],
+    () =>
+      initial &&
+      cfg &&
+      (RESTART_KEYS.some((k) => initial[k] !== cfg[k]) ||
+        // The daemon only picks the cloud backend at startup, and falls back
+        // to local when it has no key — so a new key needs a restart.
+        (sttKey !== null && cfg.stt_backend === 'elevenlabs')),
+    [initial, cfg, sttKey],
   )
 
   if (!cfg) {
-    return <p className="text-[13px] text-ink-500">Loading settings…</p>
+    return (
+      <p className="text-[13px] text-ink-500">
+        {loadError ? `Could not load settings: ${loadError}` : 'Loading settings…'}
+      </p>
+    )
   }
 
   const set = (key) => (value) => setCfg((prev) => ({ ...prev, [key]: value }))
@@ -126,16 +178,29 @@ export default function Settings() {
   const save = async () => {
     setSaving(true)
     try {
-      await window.baatsun.saveConfig({ config: cfg, openaiKey, sttKey })
-      if (needsRestart) {
-        await window.baatsun.restartDaemon()
-        setToast('Saved — daemon restarted')
+      try {
+        await window.baatsun.saveConfig({
+          config: cfg,
+          openaiKey: openaiKey === null ? undefined : openaiKey,
+          sttKey: sttKey === null ? undefined : sttKey,
+        })
+      } catch (err) {
+        setToast(`Could not save: ${err.message}`)
+        return
+      }
+      // Saved from here on, whatever the restart does.
+      const restart = needsRestart
+      await load()
+      if (restart) {
+        try {
+          await window.baatsun.restartDaemon()
+          setToast('Saved — daemon restarted')
+        } catch (err) {
+          setToast(`Saved, but the daemon did not restart: ${err.message}`)
+        }
       } else {
         setToast('Saved — in effect from your next dictation')
       }
-      setInitial(cfg)
-    } catch (err) {
-      setToast(`Could not save: ${err.message}`)
     } finally {
       setSaving(false)
       clearToastLater(() => setToast(''), 4000)
@@ -206,11 +271,51 @@ export default function Settings() {
               label="ElevenLabs API key"
               hint="Stored 0600 in its own file, never in config.json"
               provider="elevenlabs"
+              status={keys.elevenlabs}
               value={sttKey}
               onChange={setSttKey}
               placeholder="sk_…"
             />
           )}
+
+          <Field
+            label="Language"
+            hint={
+              cfg.hinglish
+                ? 'Uses the multilingual model, so Hindi/Urdu words are heard rather than guessed. Output is English.'
+                : 'English-only model: fastest and most accurate for pure English.'
+            }
+          >
+            <Select
+              value={cfg.hinglish ? 'hinglish' : 'en'}
+              onChange={(v) => set('hinglish')(v === 'hinglish')}
+              options={[
+                { value: 'en', label: 'English' },
+                { value: 'hinglish', label: 'English + Hinglish' },
+              ]}
+            />
+          </Field>
+
+          {!cloud && (
+            <Field label="Accuracy" hint="More accurate settings take a little longer per dictation">
+              <Select
+                value={String(cfg.beam_size)}
+                onChange={(v) => set('beam_size')(Number(v))}
+                options={(choices.beam_size || [1, 3, 5]).map((v) => ({
+                  value: String(v),
+                  label: BEAM_LABELS[v] || String(v),
+                }))}
+              />
+            </Field>
+          )}
+
+          <Field label="Insert text by" hint="Paste also works for any script and any length">
+            <Select
+              value={cfg.insert_method}
+              onChange={set('insert_method')}
+              options={opts(choices.insert_method || [], INSERT_LABELS)}
+            />
+          </Field>
 
           <Field
             label="Local model"
@@ -224,7 +329,10 @@ export default function Settings() {
               value={cfg.model_override || ''}
               onChange={set('model_override')}
               options={[
-                { value: '', label: `${defaultModel} (recommended)` },
+                {
+                  value: '',
+                  label: `${cfg.hinglish ? multilingualModel : defaultModel} (recommended)`,
+                },
                 ...opts(choices.model || []),
               ]}
             />
@@ -251,7 +359,7 @@ export default function Settings() {
 
       <Section
         title="Cleanup with OpenAI"
-        description="Tidies punctuation, capitalisation and filler words before typing. Only the transcribed text is sent — your audio never leaves this machine."
+        description="Fixes punctuation, capitalisation, filler words and your own spoken corrections (“3, no, 4” → “4”), keeping your wording. Only the transcribed text is sent — your audio never leaves this machine."
       >
         <Card>
           <Field label="Clean up transcripts" hint="Off until an API key is saved below">
@@ -273,7 +381,7 @@ export default function Settings() {
               </Field>
               <Field
                 label="Correction level"
-                hint="Same editor prompt at both levels; Natural is kept for older configs"
+                hint="Neither level rephrases what you said"
               >
                 <Select
                   value={cfg.cleanup_strength}
@@ -298,20 +406,11 @@ export default function Settings() {
                   label="Break long text into paragraphs"
                 />
               </Field>
-              <Field
-                label="I mix Hindi words into my speech"
-                hint="Renders garbled Hindi (“K”, “Hummer”) as English"
-              >
-                <Toggle
-                  checked={cfg.hinglish}
-                  onChange={set('hinglish')}
-                  label="I mix Hindi words into my speech"
-                />
-              </Field>
               <KeyField
                 label="OpenAI API key"
                 hint="Stored 0600 in its own file, never in config.json"
                 provider="openai"
+                status={keys.openai}
                 value={openaiKey}
                 onChange={setOpenaiKey}
                 placeholder="sk-…"
@@ -354,7 +453,15 @@ export default function Settings() {
             </p>
             {dirty && (
               <div className="flex gap-2">
-                <Button variant="ghost" onClick={() => setCfg(initial)} disabled={saving}>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setCfg(initial)
+                    setOpenaiKey(null)
+                    setSttKey(null)
+                  }}
+                  disabled={saving}
+                >
                   Discard
                 </Button>
                 <Button variant="primary" onClick={save} disabled={saving}>

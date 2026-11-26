@@ -215,7 +215,8 @@ export default class BaatsunPillExtension extends Extension {
             this._setHovered(false);
             return Clutter.EVENT_PROPAGATE;
         });
-        this._container.connect('button-press-event', () => this._onPress());
+        this._container.connect('button-press-event', (_actor, event) =>
+            this._onPress(event));
 
         // affectsInputRegion: true is what lets the hover control be clicked at
         // all, and it costs a HOVER_WIDTH x HOVER_HEIGHT hole in the click
@@ -322,10 +323,37 @@ export default class BaatsunPillExtension extends Extension {
         return this._state === 'idle' || this._state === 'listening';
     }
 
-    _onPress() {
+    _onPress(event) {
+        // Right or middle click opens the app window: without a tray icon the
+        // pill is the one piece of Baatsun always on screen, so it has to be a
+        // way in to Settings and History.
+        if (event && event.get_button() !== Clutter.BUTTON_PRIMARY) {
+            this._openWindow();
+            return Clutter.EVENT_STOP;
+        }
         if (this._canToggle())
             this._send('toggle');
         return Clutter.EVENT_STOP;
+    }
+
+    _openWindow() {
+        // The Shell's PATH often lacks ~/.local/bin, where a from-source
+        // install links the launcher, so look in the known places first.
+        const candidates = [
+            '/usr/bin/baatsun-gui',
+            GLib.build_filenamev([GLib.get_home_dir(), '.local', 'bin', 'baatsun-gui']),
+        ];
+        const launcher = candidates.find(p => GLib.file_test(p, GLib.FileTest.IS_EXECUTABLE))
+            || GLib.find_program_in_path('baatsun-gui');
+        if (!launcher) {
+            logError(new Error('baatsun-gui not found'), 'Baatsun');
+            return;
+        }
+        try {
+            GLib.spawn_async(null, [launcher], null, GLib.SpawnFlags.DEFAULT, null);
+        } catch (e) {
+            logError(e, 'Baatsun: could not open the window');
+        }
     }
 
     /* ---------------------------------------------------------------- state */
