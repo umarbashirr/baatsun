@@ -77,8 +77,8 @@ export default function Words() {
   return (
     <div className="mx-auto max-w-[720px]">
       <div className="mb-6">
-        <h2 className="text-[19px] font-semibold tracking-tight text-ink-50">Words</h2>
-        <p className="mt-1.5 max-w-lg text-[13.5px] leading-relaxed text-ink-400">
+        <h2 className="font-serif text-[42px] leading-[1.05] text-ink">Words</h2>
+        <p className="mt-1.5 max-w-lg text-[14.5px] leading-relaxed text-muted">
           Names the transcriber reliably mishears — your own name, the products you talk
           about, the tools you use. These are fed to the decoder as it listens, which fixes
           them properly. A proofreader asked to correct “Cloud Code” afterwards has to guess
@@ -102,11 +102,11 @@ export default function Words() {
             Add
           </Button>
         </div>
-        <p className="mt-2 text-[11.5px] text-ink-500">
+        <p className="mt-2 text-[12.5px] text-faint">
           {terms.length} term{terms.length === 1 ? '' : 's'}
           {saving && !error && ' · saved'}
         </p>
-        {error && <p className="mt-1 text-[12px] text-live-500">{error}</p>}
+        {error && <p className="mt-1 text-[13px] text-live">{error}</p>}
       </Card>
 
       {loaded && terms.length === 0 ? (
@@ -119,14 +119,14 @@ export default function Words() {
           {terms.map((term) => (
             <span
               key={term}
-              className="group inline-flex items-center gap-1.5 rounded-lg border border-ink-600/80 bg-ink-800 py-1.5 pl-3 pr-1.5 text-[13px] text-ink-200"
+              className="group inline-flex items-center gap-1.5 rounded-full bg-mint py-1.5 pl-3.5 pr-1.5 text-[14px] font-medium text-green"
             >
               <span className="selectable">{term}</span>
               <button
                 type="button"
                 aria-label={`Remove ${term}`}
                 onClick={() => persist(terms.filter((t) => t !== term))}
-                className="grid h-5 w-5 place-items-center rounded text-ink-500 transition-colors hover:bg-ink-700 hover:text-live-500"
+                className="grid h-6 w-6 place-items-center rounded-full text-green/60 transition-colors hover:bg-card hover:text-live"
               >
                 <svg
                   viewBox="0 0 24 24"

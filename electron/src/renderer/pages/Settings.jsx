@@ -74,7 +74,7 @@ function KeyField({ label, hint, provider, status, value, onChange, placeholder 
       label={label}
       hint={
         result ? (
-          <span className={result.ok ? 'text-good-500' : 'text-live-500'}>
+          <span className={result.ok ? 'text-good' : 'text-live'}>
             {result.ok ? '✓ ' : '✗ '}
             {result.message}
           </span>
@@ -167,7 +167,7 @@ export default function Settings() {
 
   if (!cfg) {
     return (
-      <p className="text-[13px] text-ink-500">
+      <p className="text-[14px] text-faint">
         {loadError ? `Could not load settings: ${loadError}` : 'Loading settings…'}
       </p>
     )
@@ -347,7 +347,7 @@ export default function Settings() {
         </Card>
 
         {cloud && (
-          <p className="mt-2.5 flex items-start gap-2 text-[12.5px] leading-relaxed text-ink-400">
+          <p className="mt-2.5 flex items-start gap-2 text-[13.5px] leading-relaxed text-muted">
             <Badge tone="accent">note</Badge>
             <span>
               Your audio leaves this machine while this is selected. Roughly $0.27 per hour
@@ -443,9 +443,9 @@ export default function Settings() {
       {/* Pinned rather than inline: Settings is longer than the window, and a
           save button that scrolls out of reach is a save button people miss. */}
       {(dirty || toast) && (
-        <div className="animate-rise fixed bottom-0 left-[196px] right-0 border-t border-ink-700/60 bg-ink-900/95 px-8 py-3 backdrop-blur">
+        <div className="animate-rise fixed bottom-0 left-[196px] right-0 border-t border-line bg-cream/95 px-8 py-3 backdrop-blur">
           <div className="mx-auto flex max-w-[760px] items-center justify-between gap-4">
-            <p className="text-[12.5px] text-ink-400">
+            <p className="text-[13.5px] text-muted">
               {toast ||
                 (needsRestart
                   ? 'Saving will restart the daemon — dictation pauses for a moment.'

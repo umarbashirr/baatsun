@@ -27,18 +27,22 @@ function greeting(hour) {
 
 function Tile({ label, value, hint, tone }) {
   return (
-    <Card className="px-4 py-3.5">
-      <p className="text-[11.5px] font-medium uppercase tracking-[0.07em] text-ink-400">
+    <Card className={`px-5 py-[18px] ${tone === 'accent' ? 'border-transparent bg-green' : ''}`}>
+      <p className={`text-[14px] font-medium ${tone === 'accent' ? 'text-mint' : 'text-muted'}`}>
         {label}
       </p>
       <p
-        className={`mt-1.5 text-[26px] font-semibold leading-none tracking-tight tabular-nums ${
-          tone === 'accent' ? 'text-saffron-400' : 'text-ink-50'
+        className={`mt-2 font-serif text-[36px] leading-none tabular-nums ${
+          tone === 'accent' ? 'text-cream' : 'text-ink'
         }`}
       >
         {value}
       </p>
-      {hint && <p className="mt-1.5 text-[11.5px] leading-snug text-ink-500">{hint}</p>}
+      {hint && (
+        <p className={`mt-2 text-[13.5px] leading-snug ${tone === 'accent' ? 'text-mint-2' : 'text-faint'}`}>
+          {hint}
+        </p>
+      )}
     </Card>
   )
 }
@@ -56,10 +60,10 @@ function Activity({ activity }) {
   return (
     <Card className="px-5 py-4">
       <div className="mb-3 flex items-baseline justify-between">
-        <h3 className="text-[13px] font-medium text-ink-200">Last 14 days</h3>
-        <span className="text-[11.5px] text-ink-500">peak {peak}</span>
+        <h3 className="text-[14px] font-medium text-ink">Last 14 days</h3>
+        <span className="text-[13.5px] text-faint">Busiest day: {peak}</span>
       </div>
-      <div className="flex h-[92px] items-end gap-[5px]">
+      <div className="flex h-[104px] items-end gap-[6px]">
         {activity.map(({ date, count }) => (
           <div
             key={date.toISOString()}
@@ -71,17 +75,17 @@ function Activity({ activity }) {
             })} — ${count} dictation${count === 1 ? '' : 's'}`}
           >
             <div
-              className={`w-full rounded-[3px] transition-all duration-200 ${
-                count ? 'bg-saffron-500/75 group-hover:bg-saffron-400' : 'bg-ink-750'
+              className={`w-full rounded-[7px] transition-colors duration-200 ${
+                count ? 'bg-green group-hover:bg-green-2' : 'bg-sand'
               }`}
               // A day with no dictations still gets a sliver, so the row reads
               // as a timeline rather than as gaps in the data.
-              style={{ height: count ? `${Math.max(8, (count / peak) * 92)}px` : '3px' }}
+              style={{ height: count ? `${Math.max(8, (count / peak) * 104)}px` : '4px' }}
             />
           </div>
         ))}
       </div>
-      <div className="mt-2 flex justify-between text-[11px] text-ink-500">
+      <div className="mt-2.5 flex justify-between text-[13.5px] text-faint">
         <span>
           {activity[0]?.date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
         </span>
@@ -120,16 +124,16 @@ export default function Home({ daemon, onNavigate }) {
 
   return (
     <div className="mx-auto max-w-[880px]">
-      <div className="mb-7">
-        <h2 className="text-[27px] font-semibold tracking-tight text-ink-50">
+      <div className="mb-8">
+        <h2 className="font-serif text-[42px] leading-[1.05] text-ink">
           {hello}
           {name ? `, ${name}` : ''}
         </h2>
-        <p className="mt-1.5 text-[13.5px] text-ink-400">
+        <p className="mt-2 text-[15.5px] text-muted">
           {stats.today > 0 ? (
             <>
               {stats.today} dictation{stats.today === 1 ? '' : 's'} today
-              {stats.streak > 1 && ` · ${stats.streak} day streak`}
+              {stats.streak > 1 && `, and a ${stats.streak}-day streak`}
             </>
           ) : (
             'Nothing dictated yet today.'
@@ -137,11 +141,11 @@ export default function Home({ daemon, onNavigate }) {
         </p>
       </div>
 
-      <figure className="mb-8 border-l-2 border-saffron-500/50 pl-4">
-        <blockquote className="selectable text-[14px] italic leading-relaxed text-ink-300">
+      <figure className="mb-10 rounded-[20px] bg-sand px-6 py-5">
+        <blockquote className="selectable font-serif text-[19px] italic leading-snug text-ink">
           “{quote}”
         </blockquote>
-        <figcaption className="mt-1 text-[12px] text-ink-500">— {author}</figcaption>
+        <figcaption className="mt-2 text-[14px] text-muted">{author}</figcaption>
       </figure>
 
       <Section title="At a glance">
@@ -174,18 +178,18 @@ export default function Home({ daemon, onNavigate }) {
 
       {stats.topApps.length > 0 && (
         <Section title="Where it lands">
-          <Card className="divide-y divide-ink-700/50">
+          <Card className="divide-y divide-line">
             {stats.topApps.slice(0, 5).map(([app, count]) => (
-              <div key={app} className="flex items-center justify-between px-4 py-2.5">
-                <span className="text-[13.5px] text-ink-200">{app}</span>
+              <div key={app} className="flex items-center justify-between px-5 py-3">
+                <span className="text-[15px] text-ink">{app}</span>
                 <div className="flex items-center gap-3">
-                  <div className="h-1 w-24 overflow-hidden rounded-full bg-ink-750">
+                  <div className="h-1.5 w-28 overflow-hidden rounded-full bg-sand">
                     <div
-                      className="h-full rounded-full bg-saffron-500/70"
+                      className="h-full rounded-full bg-green"
                       style={{ width: `${(count / stats.topApps[0][1]) * 100}%` }}
                     />
                   </div>
-                  <span className="w-8 text-right text-[12.5px] tabular-nums text-ink-400">
+                  <span className="w-8 text-right text-[14.5px] tabular-nums text-muted">
                     {count}
                   </span>
                 </div>
@@ -197,17 +201,17 @@ export default function Home({ daemon, onNavigate }) {
 
       {stats.total === 0 && daemon.loaded && (
         <Card className="px-5 py-6 text-center">
-          <p className="text-[14px] font-medium text-ink-200">Nothing here yet</p>
-          <p className="mx-auto mt-1.5 max-w-md text-[13px] text-ink-400">
+          <p className="font-serif text-[22px] text-ink">Nothing here yet</p>
+          <p className="mx-auto mt-1.5 max-w-md text-[14px] text-muted">
             Hold your hotkey anywhere, say something, and let go. The transcript is typed
             into whatever window has focus.
           </p>
           <button
             type="button"
             onClick={() => onNavigate('dictate')}
-            className="mt-4 text-[13px] font-medium text-saffron-400 hover:text-saffron-500"
+            className="mt-4 rounded-full bg-green px-5 py-2 text-[14px] font-medium text-cream hover:bg-green-2"
           >
-            Open Dictate →
+            Open Dictate
           </button>
         </Card>
       )}

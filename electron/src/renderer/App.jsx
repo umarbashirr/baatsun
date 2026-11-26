@@ -58,18 +58,18 @@ function TitleBar({ title, state, connected }) {
   const transcribing = state.state === 'transcribing'
 
   return (
-    <header className="drag flex h-12 shrink-0 items-center justify-between border-b border-ink-700/60 bg-ink-900/80 px-5 backdrop-blur">
+    <header className="drag flex h-14 shrink-0 items-center justify-between px-8">
       <div className="flex items-center gap-3">
-        <h1 className="text-[13.5px] font-semibold text-ink-100">{title}</h1>
+        <h1 className="text-[15px] font-medium text-muted">{title}</h1>
         {recording && (
           <Badge tone="live">
-            <span className="animate-live h-1.5 w-1.5 rounded-full bg-live-500" />
+            <span className="animate-live h-1.5 w-1.5 rounded-full bg-live" />
             Recording
           </Badge>
         )}
         {transcribing && (
           <Badge tone="accent">
-            <span className="animate-live h-1.5 w-1.5 rounded-full bg-saffron-500" />
+            <span className="animate-live h-1.5 w-1.5 rounded-full bg-green" />
             Transcribing
           </Badge>
         )}
@@ -91,8 +91,8 @@ function TitleBar({ title, state, connected }) {
             type="button"
             aria-label={label}
             onClick={action}
-            className={`grid h-7 w-7 place-items-center rounded-md text-ink-400 transition-colors hover:text-ink-100 ${
-              label === 'Close' ? 'hover:bg-live-500 hover:text-white' : 'hover:bg-ink-750'
+            className={`grid h-8 w-8 place-items-center rounded-full text-muted transition-colors hover:text-ink ${
+              label === 'Close' ? 'hover:bg-live hover:text-white' : 'hover:bg-sand'
             }`}
           >
             <svg
@@ -120,37 +120,34 @@ export default function App() {
 
   return (
     <div className="flex h-full">
-      <nav className="drag flex w-[196px] shrink-0 flex-col border-r border-ink-700/60 bg-ink-950">
-        <div className="flex h-12 items-center gap-2.5 px-5">
-          <div className="grid h-6 w-6 place-items-center rounded-md bg-saffron-500 text-[13px] font-bold text-ink-950">
-            ब
-          </div>
-          <span className="text-[14px] font-semibold tracking-tight">Baatsun</span>
+      <nav className="drag flex w-[212px] shrink-0 flex-col bg-sand">
+        <div className="flex h-14 items-center px-6 pt-1">
+          <span className="font-serif text-[25px] leading-none text-ink">baatsun</span>
         </div>
 
-        <div className="no-drag flex flex-1 flex-col gap-0.5 px-3 py-3">
+        <div className="no-drag flex flex-1 flex-col gap-1 px-3 py-4">
           {PAGES.map(({ id, label }) => (
             <button
               key={id}
               type="button"
               onClick={() => setPage(id)}
               aria-current={id === page ? 'page' : undefined}
-              className={`flex items-center gap-3 rounded-lg px-3 py-2 text-[13.5px] transition-colors ${
+              className={`flex items-center gap-3 rounded-full px-4 py-2.5 text-[15px] transition-colors ${
                 id === page
-                  ? 'bg-ink-800 font-medium text-ink-50'
-                  : 'text-ink-400 hover:bg-ink-850 hover:text-ink-200'
+                  ? 'bg-card font-medium text-ink shadow-[0_1px_3px_rgba(27,26,23,0.08)]'
+                  : 'text-muted hover:bg-sand-2/60 hover:text-ink'
               }`}
             >
-              <Icon name={id} />
+              <Icon name={id} className={`h-[18px] w-[18px] ${id === page ? 'text-green' : ''}`} />
               {label}
             </button>
           ))}
         </div>
 
-        <div className="no-drag px-5 pb-4 text-[11.5px] text-ink-500">
+        <div className="no-drag px-6 pb-5 text-[13px] text-muted">
           <span
-            className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle ${
-              daemon.connected ? 'bg-good-500' : 'bg-ink-600'
+            className={`mr-2 inline-block h-2 w-2 rounded-full align-middle ${
+              daemon.connected ? 'bg-good' : 'bg-faint'
             }`}
           />
           {daemon.connected ? 'Connected' : 'Reconnecting…'}
@@ -159,7 +156,7 @@ export default function App() {
 
       <main className="flex min-w-0 flex-1 flex-col">
         <TitleBar title={active.label} state={daemon.state} connected={daemon.connected} />
-        <div key={page} className="animate-rise flex-1 overflow-y-auto px-8 py-7">
+        <div key={page} className="animate-rise flex-1 overflow-y-auto px-8 pb-10 pt-4">
           <Component daemon={daemon} onNavigate={setPage} />
         </div>
       </main>

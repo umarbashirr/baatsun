@@ -42,15 +42,15 @@ function Entry({ entry, onRetype, onDelete }) {
   })
 
   return (
-    <div className="group px-4 py-3 transition-colors hover:bg-ink-800/50">
-      <div className="mb-1.5 flex items-center gap-2 text-[11.5px] text-ink-500">
+    <div className="group px-4 py-3 transition-colors hover:bg-sand/60">
+      <div className="mb-1.5 flex items-center gap-2 text-[12.5px] text-faint">
         <span className="tabular-nums">{timeOf(entry.ts)}</span>
-        {entry.app && <span className="text-ink-600">·</span>}
+        {entry.app && <span className="text-faint">·</span>}
         {entry.app && <span>{prettyApp(entry.app)}</span>}
         {entry.raw && <Badge tone="accent">cleaned</Badge>}
         {entry.secs != null && (
           <>
-            <span className="text-ink-600">·</span>
+            <span className="text-faint">·</span>
             <span className="tabular-nums">{entry.secs}s</span>
           </>
         )}
@@ -68,15 +68,15 @@ function Entry({ entry, onRetype, onDelete }) {
         </div>
       </div>
 
-      <p className="selectable text-[13.5px] leading-relaxed text-ink-200">{entry.text}</p>
-      {error && <p className="mt-1 text-[12px] text-live-500">{error}</p>}
+      <p className="selectable text-[14.5px] leading-relaxed text-ink">{entry.text}</p>
+      {error && <p className="mt-1 text-[13px] text-live">{error}</p>}
 
       {entry.raw && (
         <details className="mt-2">
-          <summary className="cursor-pointer text-[11.5px] text-ink-500 hover:text-ink-300">
+          <summary className="cursor-pointer text-[12.5px] text-faint hover:text-muted">
             Before cleanup
           </summary>
-          <p className="selectable mt-1.5 border-l-2 border-ink-700 pl-3 text-[12.5px] leading-relaxed text-ink-400">
+          <p className="selectable mt-1.5 border-l-2 border-line pl-3 text-[13.5px] leading-relaxed text-muted">
             {entry.raw}
           </p>
         </details>
@@ -116,14 +116,14 @@ export default function History({ daemon }) {
           className="min-w-0 flex-1"
           aria-label="Search transcripts"
         />
-        <div className="flex rounded-lg border border-ink-600/80 bg-ink-750 p-0.5">
+        <div className="flex rounded-full border border-line bg-card p-1">
           {FILTERS.map(({ id, label }) => (
             <button
               key={id}
               type="button"
               onClick={() => setFilter(id)}
-              className={`rounded-md px-3 py-1.5 text-[12.5px] transition-colors ${
-                filter === id ? 'bg-ink-600 text-ink-50' : 'text-ink-400 hover:text-ink-200'
+              className={`rounded-full px-4 py-1.5 text-[14px] transition-colors ${
+                filter === id ? 'bg-green font-medium text-cream' : 'text-muted hover:text-ink'
               }`}
             >
               {label}
@@ -154,10 +154,10 @@ export default function History({ daemon }) {
           </Button>
         )}
       </div>
-      {clearError && <p className="mb-3 text-[12px] text-live-500">{clearError}</p>}
+      {clearError && <p className="mb-3 text-[13px] text-live">{clearError}</p>}
 
       {total > 0 && (
-        <p className="mb-3 text-[12px] text-ink-500">
+        <p className="mb-3 text-[13px] text-faint">
           {total} of {daemon.entries.length} shown
         </p>
       )}
@@ -171,10 +171,10 @@ export default function History({ daemon }) {
       ) : (
         groups.map(([label, items]) => (
           <section key={label} className="mb-6">
-            <h3 className="mb-2 text-[11.5px] font-semibold uppercase tracking-[0.09em] text-ink-500">
+            <h3 className="mb-2.5 font-serif text-[20px] text-ink">
               {label}
             </h3>
-            <Card className="divide-y divide-ink-700/40 overflow-hidden">
+            <Card className="divide-y divide-line overflow-hidden">
               {items.map((entry) => (
                 <Entry
                   key={entry.id}
