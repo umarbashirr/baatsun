@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import ActivityChart from '../components/ActivityChart.jsx'
 import { Card, Section, Badge } from '../components/ui.jsx'
 import {
   computeStats,
@@ -43,54 +44,6 @@ function Tile({ label, value, hint, tone }) {
           {hint}
         </p>
       )}
-    </Card>
-  )
-}
-
-/**
- * Fourteen days of dictation counts.
- *
- * An SVG rather than a canvas so it scales with the window and stays legible
- * when the user bumps their font size; bars rather than a line because the
- * quantity is a count per day, and a line between two days implies values
- * in between that don't exist.
- */
-function Activity({ activity }) {
-  const peak = Math.max(1, ...activity.map((d) => d.count))
-  return (
-    <Card className="px-5 py-4">
-      <div className="mb-3 flex items-baseline justify-between">
-        <h3 className="text-[14px] font-medium text-ink">Last 14 days</h3>
-        <span className="text-[13.5px] text-faint">Busiest day: {peak}</span>
-      </div>
-      <div className="flex h-[104px] items-end gap-[6px]">
-        {activity.map(({ date, count }) => (
-          <div
-            key={date.toISOString()}
-            className="group relative flex flex-1 flex-col justify-end"
-            title={`${date.toLocaleDateString(undefined, {
-              weekday: 'short',
-              day: 'numeric',
-              month: 'short',
-            })} — ${count} dictation${count === 1 ? '' : 's'}`}
-          >
-            <div
-              className={`w-full rounded-[7px] transition-colors duration-200 ${
-                count ? 'bg-green group-hover:bg-green-2' : 'bg-sand'
-              }`}
-              // A day with no dictations still gets a sliver, so the row reads
-              // as a timeline rather than as gaps in the data.
-              style={{ height: count ? `${Math.max(8, (count / peak) * 104)}px` : '4px' }}
-            />
-          </div>
-        ))}
-      </div>
-      <div className="mt-2.5 flex justify-between text-[13.5px] text-faint">
-        <span>
-          {activity[0]?.date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
-        </span>
-        <span>Today</span>
-      </div>
     </Card>
   )
 }
@@ -173,7 +126,7 @@ export default function Home({ daemon, onNavigate }) {
       </Section>
 
       <Section title="Activity">
-        <Activity activity={stats.activity} />
+        <ActivityChart entries={daemon.entries} />
       </Section>
 
       {stats.topApps.length > 0 && (

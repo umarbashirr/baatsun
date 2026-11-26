@@ -208,9 +208,23 @@ body {
   }
 }
 
+/* Chart columns grow from the baseline when a range is picked (the group is
+   keyed by range, so this runs on change, not on hover). */
+.chart-bars path {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: bar-in 420ms var(--ease-out) both;
+}
+@keyframes bar-in {
+  from {
+    transform: scaleY(0.02);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-live,
   .animate-rise,
+  .chart-bars path,
   .select-content[data-state='open'],
   .select-content[data-state='closed'] {
     animation: none;

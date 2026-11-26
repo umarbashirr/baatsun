@@ -121,6 +121,46 @@ export function computeStats(entries, cleanupModel = 'gpt-4o-mini') {
   }
 }
 
+// HISTORY_LIMIT in baatsun.py: the daemon keeps this many transcripts.
+export const HISTORY_LIMIT = 500
+
+/**
+ * Dictations per day for the last `days` days, today last.
+ *
+ * `coveredFrom` is the first day the history can actually speak for. Once
+ * history is at its cap, days before the oldest kept transcript read as zero
+ * only because they were dropped, and the chart has to say so rather than
+ * draw a quiet week that never happened.
+ */
+export function dailyCounts(entries, days) {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const counts = new Map()
+  for (let n = days - 1; n >= 0; n -= 1) {
+    const day = new Date(today)
+    day.setDate(day.getDate() - n)
+    counts.set(dayKey(day), { date: day, count: 0 })
+  }
+  let oldest = Infinity
+  for (const entry of entries) {
+    if (typeof entry.ts !== 'number') continue
+    oldest = Math.min(oldest, entry.ts)
+    const day = new Date(entry.ts * 1000)
+    day.setHours(0, 0, 0, 0)
+    const bucket = counts.get(dayKey(day))
+    if (bucket) bucket.count += 1
+  }
+  let coveredFrom = null
+  if (entries.length >= HISTORY_LIMIT && Number.isFinite(oldest)) {
+    // The oldest kept day is itself partial (its earlier entries were the
+    // ones dropped), so the first day history fully covers is the next one.
+    coveredFrom = new Date(oldest * 1000)
+    coveredFrom.setHours(0, 0, 0, 0)
+    coveredFrom.setDate(coveredFrom.getDate() + 1)
+  }
+  return { days: [...counts.values()], coveredFrom }
+}
+
 /** "2h 5m", "45s" — the same shape human_duration produces in Python. */
 export function humanDuration(seconds) {
   const total = Math.round(seconds || 0)

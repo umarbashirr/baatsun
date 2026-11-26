@@ -207,3 +207,47 @@ export function Badge({ tone = 'neutral', children }) {
     </span>
   )
 }
+
+/**
+ * A pill-shaped segmented control: one choice from a few, all visible.
+ * Arrow keys move between options the way a radio group does.
+ */
+export function Segmented({ value, onChange, options, label }) {
+  const move = (e) => {
+    const i = options.findIndex((o) => o.value === value)
+    const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0
+    if (!d) return
+    e.preventDefault()
+    const next = options[(i + d + options.length) % options.length]
+    onChange(next.value)
+    e.currentTarget.querySelector(`[data-value="${next.value}"]`)?.focus()
+  }
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      onKeyDown={move}
+      className="no-drag inline-flex rounded-full border border-line bg-card p-1"
+    >
+      {options.map((o) => {
+        const on = o.value === value
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            tabIndex={on ? 0 : -1}
+            data-value={o.value}
+            onClick={() => onChange(o.value)}
+            className={`rounded-full px-3.5 py-1.5 text-[13.5px] transition-colors duration-150 ${
+              on ? 'bg-green font-medium text-cream' : 'text-muted hover:text-ink'
+            }`}
+          >
+            {o.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
