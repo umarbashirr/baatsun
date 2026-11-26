@@ -7,7 +7,7 @@
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-informational)](#requirements)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-3ecf8e)](CONTRIBUTING.md)
 
-**[Website](https://umarbashirr.github.io/baatsun/)** ·
+**[Website](https://getbaatsun.netlify.app/)** ·
 **[Install](#quick-install-ubuntudebian)** ·
 **[Contributing](CONTRIBUTING.md)** ·
 **[Security](SECURITY.md)**

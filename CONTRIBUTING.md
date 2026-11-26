@@ -36,7 +36,7 @@ By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 | `electron/` | The app window: Electron main process plus a React and Tailwind renderer |
 | `packaging/` | `.deb` build script, Debian maintainer scripts, hash-pinned Python requirements |
 | `install.sh` | The `curl … \| bash` installer, served from `main` |
-| `docs/` | The landing page at <https://umarbashirr.github.io/baatsun/> |
+| `docs/` | The landing page, deployed to <https://getbaatsun.netlify.app/> (also served by GitHub Pages). Static files, no build step; fonts and Lenis are vendored |
 
 The [Architecture](README.md#architecture) section of the README covers how
 these talk to each other.
