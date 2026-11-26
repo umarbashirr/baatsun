@@ -56,6 +56,15 @@ if [ ! -d "$ELECTRON_SRC/node_modules/electron" ]; then
     echo "       Run: (cd $ELECTRON_SRC && npm ci)" >&2
     exit 1
 fi
+# The npm package is only a downloader: the runtime itself is fetched by its
+# install script, and when that download fails npm ci still succeeds. Without
+# this check the package built fine and shipped with no window at all.
+if [ ! -x "$ELECTRON_SRC/node_modules/electron/dist/electron" ]; then
+    echo "error: the Electron runtime was not downloaded" >&2
+    echo "       ($ELECTRON_SRC/node_modules/electron/dist/electron is missing)." >&2
+    echo "       Run: (cd $ELECTRON_SRC && node node_modules/electron/install.js)" >&2
+    exit 1
+fi
 
 echo "Building the application window ..."
 (cd "$ELECTRON_SRC" && npm run build >/dev/null)

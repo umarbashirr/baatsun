@@ -24,7 +24,11 @@ jobs:
 
       - name: Install the window's build dependencies
         working-directory: electron
-        run: npm ci
+        run: |
+          npm ci
+          # npm ci succeeds even when Electron's runtime download fails;
+          # retry it explicitly so the .deb never ships without a window.
+          [ -x node_modules/electron/dist/electron ] || node node_modules/electron/install.js
 
       - name: Check the Python sources compile
         run: python3 -m py_compile src/*.py
