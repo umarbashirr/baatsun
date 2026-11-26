@@ -932,11 +932,13 @@ def _finish_recording(proc, wav_path, secs, capture):
 
         raw = text
         text, usage = maybe_clean(text, app, title)
-        # Enter sends in a chat window and runs a command in a terminal, so
-        # no newline reaches either, whatever the cleanup model returned.
+        # Enter sends in a chat window, so no newline reaches one, whatever
+        # the cleanup model returned. Terminals and editors keep theirs, and
+        # insertion makes each one a soft newline instead of an Enter.
         if not baatsun_context.allows_line_breaks(app, title):
             text = " ".join(text.split())
-        inserted, how = insert_transcript(text, app)
+        inserted, how = insert_transcript(
+            text, app, soft_newlines=baatsun_context.soft_newlines(app, title))
         entry = add_history_entry(text, raw, app=app, context=context,
                                   secs=secs, usage=usage, stt=stt_usage)
         broadcast({"type": "transcript", "entry": entry})
@@ -958,10 +960,11 @@ def _finish_recording(proc, wav_path, secs, capture):
                 pass
 
 
-def insert_transcript(text, app=None):
+def insert_transcript(text, app=None, soft_newlines=False):
     """Paste or type text into the focused window. Returns (ok, how/error)."""
     method = load_config().get("insert_method") or "paste"
-    ok, how = baatsun_insert.insert(text, app=app, method=method, log=log)
+    ok, how = baatsun_insert.insert(text, app=app, method=method, log=log,
+                                    soft_newlines=soft_newlines)
     if ok:
         log(f"inserted ({how})")
     else:

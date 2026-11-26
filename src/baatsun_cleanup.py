@@ -171,7 +171,7 @@ _SURFACE_POST = (
     "distinct points. Never drop one of their points to save room."
 )
 _SURFACE_SOCIAL = (
-    "This will be typed into a LinkedIn or forum post. "
+    "This will be typed into a LinkedIn, Facebook, Instagram or forum post. "
     + SOCIAL_LAYOUT_LINE + " No "
     "hashtags, no emoji and no headings unless the speaker said them."
 )
@@ -180,7 +180,15 @@ _SURFACE_DOCS = (
     "out as written prose: full sentences in paragraphs, no chat shorthand. Do "
     "not add a title, headings or bullets that were not spoken."
 )
+_SURFACE_CODE = (
+    "This will be typed into a terminal or code editor, usually as a prompt "
+    "for an AI coding assistant. Keep every technical term, file name, path, "
+    "command, flag and identifier exactly as spoken. Do not wrap anything in "
+    "markdown, code blocks or bullets, and do not add anything that was not "
+    "said."
+)
 SURFACE_LINES = {
+    baatsun_context.CODE: _SURFACE_CODE,
     baatsun_context.EMAIL: _SURFACE_EMAIL,
     baatsun_context.CHAT: _SURFACE_CHAT,
     baatsun_context.POST: _SURFACE_POST,
@@ -190,7 +198,9 @@ SURFACE_LINES = {
 
 # Surfaces whose layout is paragraphs. Only chat is left out, and for a reason
 # that is not stylistic: Enter sends there, so a paragraph break would post the
-# message in pieces. Everywhere a break is survivable, a long dictation gets
+# message in pieces. Code is in: a long prompt to a coding assistant reads
+# better in paragraphs, and insertion turns each break into a soft newline
+# (bracketed paste, or Shift+Enter when typed) so none of them submits it. Everywhere a break is survivable, a long dictation gets
 # one, because a wall of text is the thing people actually complain about.
 #
 # A post on X belongs in here, briefly did not, and that was a regression: a
@@ -199,7 +209,8 @@ SURFACE_LINES = {
 # Short comparison posts still get line breaks from the social-post rules in
 # the core prompt; LINE_BREAK_LINE is the extra nudge on longer dumps.
 PARAGRAPH_SURFACES = frozenset({
-    baatsun_context.EMAIL, baatsun_context.POST, baatsun_context.SOCIAL,
+    baatsun_context.CODE, baatsun_context.EMAIL, baatsun_context.POST,
+    baatsun_context.SOCIAL,
     baatsun_context.DOCS,
 })
 

@@ -33,7 +33,7 @@ CODE = "code"        # terminals, editors, GitHub, anywhere verbatim wins
 EMAIL = "email"      # mail clients and webmail
 CHAT = "chat"        # WhatsApp, Slack, Telegram: one message, Enter sends
 POST = "post"        # X and the other short-form timelines
-SOCIAL = "social"    # LinkedIn, Reddit: a feed post, but a long one
+SOCIAL = "social"    # LinkedIn, Reddit, Facebook, Instagram: longer feed posts
 DOCS = "docs"        # documents, notes, articles
 
 # Matched against the window class, lowercased. Terminals and editors: anything
@@ -96,7 +96,12 @@ BROWSER_APPS = {
 # quietly when two lists have to be edited together.
 MAIL_SITES = (
     r"gmail|outlook|proton\s*mail|mail\.proton|fastmail|zoho\s*mail|"
-    r"superhuman|roundcube|mail\.yahoo|yahoo\s*mail|hey\.com"
+    r"superhuman|roundcube|mail\.yahoo|yahoo\s*mail|hey\.com|"
+    # Google Workspace accounts with custom branding never say "Gmail": the tab
+    # is "Inbox (3) - you@company.com - Company Name Mail". The account address
+    # followed by a "... Mail" segment is what every such tab has, and pinning
+    # it to the address keeps a "cold mail draft" document out of it.
+    r"@[\w-]+(?:\.[\w-]+)+\s*[-—|]\s*[^-—|]*\bmail\b"
 )
 POST_SITES = (
     # Browsers title X as "Home / X" or "Name (@handle) / X", never "x.com", so
@@ -105,7 +110,7 @@ POST_SITES = (
     r"(?:^|\W)x\.com|/\s*X(?=\s*[-—|]|\s*$)|\bon X:|"
     r"twitter|mastodon|bluesky|bsky|threads"
 )
-SOCIAL_SITES = r"linkedin|reddit"
+SOCIAL_SITES = r"linkedin|reddit|facebook|instagram"
 DOCS_SITES = (
     # "google docs" as well as the hostname: a Docs tab is titled "Quarterly
     # update - Google Docs" and never carries the URL, so the hostname form
@@ -118,7 +123,10 @@ DOCS_SITES = (
 # prose set made WhatsApp Web fall through to "developer" and skip cleanup.
 CHAT_SITE_NAMES = (
     r"whatsapp|microsoft teams|teams\.microsoft|google chat|chat\.google|"
-    r"messenger|slack|discord"
+    r"messenger|slack|discord|telegram|"
+    # Instagram's DMs ("Inbox • Chats", "Instagram • Direct"): Enter sends
+    # there, so they must be caught as chat before "instagram" reads as social.
+    r"•\s*(?:chats|direct)\b"
 )
 
 PROSE_SITES = re.compile(
@@ -223,20 +231,32 @@ def classify(app=None, title=None):
 
 
 def allows_line_breaks(app=None, title=None):
-    """Whether a newline typed here starts a line rather than sending.
+    """Whether the text may carry line breaks into this window at all.
 
-    ydotool types "\\n" as a real Enter press, and in every chat client Enter
-    is send. Breaking a message into paragraphs there would post it in pieces,
-    so those windows get proofreading without reformatting.
+    Only chat says no. Enter sends there, and a chat message is one line by
+    convention anyway, so breaks are flattened rather than softened.
+
+    Terminals and editors say yes, but only because insertion softens them: a
+    multi-line prompt is pasted (a terminal's bracketed paste inserts newlines
+    without running anything) or, when typed, each break goes in as
+    Shift+Enter — see soft_newlines. A bare Enter never reaches them.
 
     This is the safety question only — whether a line break is *survivable*
     here, not whether one belongs. Whether the layout actually wants paragraphs
     is a matter of the surface's conventions, and baatsun_cleanup decides it.
-
-    Defaults to False for anything unrecognised: a missing paragraph break is a
-    cosmetic loss, a prematurely-sent message is not recoverable.
     """
-    return surface(app, title) not in (CODE, CHAT)
+    return surface(app, title) != CHAT
+
+
+def soft_newlines(app=None, title=None):
+    """Whether a typed line break must be Shift+Enter rather than Enter.
+
+    True for terminals and editors — where Enter runs the command or submits
+    the prompt — and for anything unrecognised, which lands on CODE too.
+    Shift+Enter is a plain newline nearly everywhere else, so the
+    conservative answer costs nothing.
+    """
+    return surface(app, title) == CODE
 
 
 def should_clean(cfg, app=None, title=None):

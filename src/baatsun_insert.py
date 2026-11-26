@@ -26,6 +26,7 @@ import time
 # whose `key` command takes "<code>:<1|0>" pairs rather than key names.
 KEY_LEFTCTRL = 29
 KEY_LEFTSHIFT = 42
+KEY_ENTER = 28
 KEY_V = 47
 
 # Short, but not zero: some toolkits drop characters when keys arrive with no
@@ -195,17 +196,54 @@ def type_text(text):
     return ok, err
 
 
-def insert(text, app=None, method="paste", log=None):
-    """Insert text into the focused window. Returns (ok, how or error)."""
+def _press_shift_enter():
+    if ydotool_major() >= 1:
+        return _run(["ydotool", "key", f"{KEY_LEFTSHIFT}:1", f"{KEY_ENTER}:1",
+                     f"{KEY_ENTER}:0", f"{KEY_LEFTSHIFT}:0"])
+    return _run(["ydotool", "key", "shift+enter"])
+
+
+def type_soft(text):
+    """Type text with every line break pressed as Shift+Enter.
+
+    ydotool types "\n" as a bare Enter, which runs a shell command or submits
+    a prompt to a coding assistant halfway through. Shift+Enter is a newline
+    in those prompts and in editors alike.
+    """
+    for i, line in enumerate(text.split("\n")):
+        if i:
+            ok, err = _press_shift_enter()
+            if not ok:
+                return False, err
+        if line:
+            ok, err = type_text(line)
+            if not ok:
+                return False, err
+    return True, ""
+
+
+def insert(text, app=None, method="paste", log=None, soft_newlines=False):
+    """Insert text into the focused window. Returns (ok, how or error).
+
+    soft_newlines: line breaks must not arrive as Enter (terminals, editors).
+    Pasting already satisfies that — a terminal's bracketed paste inserts
+    newlines without running anything — so a multi-line paste into a terminal
+    is tried even when "type" is the chosen method, and typing presses
+    Shift+Enter for each break.
+    """
     if not text:
         return True, "nothing"
-    if method != "type":
+    multiline = "\n" in text
+    if method != "type" or (soft_newlines and multiline and is_terminal(app)):
         ok, err = paste(text, app)
         if ok:
             return True, "pasted"
         if log:
             log(f"paste failed ({err}) — typing instead")
-    ok, err = type_text(text)
+    if soft_newlines and multiline:
+        ok, err = type_soft(text)
+    else:
+        ok, err = type_text(text)
     if ok:
         return True, "typed"
     return False, err

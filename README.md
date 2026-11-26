@@ -684,7 +684,7 @@ to the daemon (on Wayland nothing outside the Shell can see this), and
 | focused window | verdict |
 |---|---|
 | terminals, VS Code, JetBrains IDEs, editors | developer — typed verbatim |
-| browser on LinkedIn / X / Reddit / Gmail | prose — cleaned |
+| browser on LinkedIn / X / Reddit / Facebook / Instagram / Gmail (incl. Workspace) | prose — cleaned |
 | browser on GitHub / localhost / Jira / CI | developer — typed verbatim |
 | Slack, Discord, Telegram, mail clients | prose — cleaned |
 | **anything unrecognised, or no extension** | **developer — typed verbatim** |
@@ -703,12 +703,12 @@ is heading for, and lays it out accordingly:
 
 | focused window | surface | what changes |
 |---|---|---|
-| Gmail, Outlook, Proton Mail, Thunderbird | email | a spoken greeting and sign-off each get their own line; the body becomes paragraphs |
-| WhatsApp, Slack, Telegram, Discord, Teams | chat | one line, no breaks at all — Enter sends here — and the spoken register is kept |
+| Gmail (incl. Workspace "Company Mail" tabs), Outlook, Proton Mail, Thunderbird | email | a spoken greeting and sign-off each get their own line; the body becomes paragraphs |
+| WhatsApp, Slack, Telegram, Discord, Teams, Google Chat, Messenger, Instagram DMs | chat | one line, no breaks at all — Enter sends here — and the spoken register is kept |
 | X, Mastodon, Bluesky, Threads | post | short paragraphs once it is long enough to need them; a short post stays one block, and what fits in 280 characters stays inside 280 |
-| LinkedIn, Reddit | social | short paragraphs, plain first person, no hashtags |
+| LinkedIn, Reddit, Facebook, Instagram | social | short paragraphs, plain first person, no hashtags |
 | Google Docs, Notion, Obsidian, Medium, Substack | docs | written prose in paragraphs |
-| terminals, editors, GitHub, anything unrecognised | code | nothing — typed exactly as transcribed |
+| terminals, editors, GitHub, anything unrecognised | code | technical terms kept verbatim; a long prompt gets paragraphs, inserted as soft newlines (bracketed paste, or Shift+Enter when typed) so nothing submits early |
 
 What it does *not* do is write anything for you. It never adds a greeting, a
 sign-off, a signature, a subject line, a hashtag or an emoji you didn't speak,
